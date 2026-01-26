@@ -29,3 +29,6 @@ htmlcov/
 
 # Maven
 **/target/
+
+# misc
+mcphost*.json
