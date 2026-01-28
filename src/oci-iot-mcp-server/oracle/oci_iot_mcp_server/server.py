@@ -87,7 +87,9 @@ def get_digital_twin_adapter(
     try:
         iot_client = get_iot_client()
         digital_twin_adapter = iot_client.get_digital_twin_adapter(digital_twin_adapter_id=digital_twin_adapter_id)
-        return digital_twin_adapter.data
+        # Convert to pydantic model for validation and structured output
+        from .models import DigitalTwinAdapterModel
+        return DigitalTwinAdapterModel.model_validate(digital_twin_adapter.data).model_dump()
     except Exception as e:
         logger.error(f"Error getting digital twin adapter {digital_twin_adapter_id}: {e}")
         raise
@@ -102,7 +104,9 @@ def get_digital_twin_instance(
     try:
         iot_client = get_iot_client()
         digital_twin_instance = iot_client.get_digital_twin_instance(digital_twin_instance_id=digital_twin_instance_id)
-        return digital_twin_instance.data
+        # Convert to pydantic model for validation and structured output
+        from .models import DigitalTwinInstanceModel
+        return DigitalTwinInstanceModel.model_validate(digital_twin_instance.data).model_dump()
     except Exception as e:
         logger.error(f"Error getting digital twin instance {digital_twin_instance_id}: {e}")
         raise
@@ -117,6 +121,7 @@ def get_digital_twin_instance_content(
     try:
         iot_client = get_iot_client()
         digital_twin_instance_content = iot_client.get_digital_twin_instance_content(digital_twin_instance_id=digital_twin_instance_id)
+        # For content, return as-is since it's a string
         return digital_twin_instance_content.data
     except Exception as e:
         logger.error(f"Error getting digital twin instance content {digital_twin_instance_id}: {e}")
@@ -132,7 +137,9 @@ def get_digital_twin_model(
     try:
         iot_client = get_iot_client()
         digital_twin_model = iot_client.get_digital_twin_model(digital_twin_model_id=digital_twin_model_id)
-        return digital_twin_model.data
+        # Convert to pydantic model for validation and structured output
+        from .models import DigitalTwinModelModel
+        return DigitalTwinModelModel.model_validate(digital_twin_model.data).model_dump()
     except Exception as e:
         logger.error(f"Error getting digital twin model {digital_twin_model_id}: {e}")
         raise
@@ -147,6 +154,7 @@ def get_digital_twin_model_spec(
     try:
         iot_client = get_iot_client()
         digital_twin_model_spec = iot_client.get_digital_twin_model_spec(digital_twin_model_id=digital_twin_model_id)
+        # For spec, return as-is since it's a string
         return digital_twin_model_spec.data
     except Exception as e:
         logger.error(f"Error getting digital twin model spec {digital_twin_model_id}: {e}")
@@ -162,7 +170,9 @@ def get_digital_twin_relationship(
     try:
         iot_client = get_iot_client()
         digital_twin_relationship = iot_client.get_digital_twin_relationship(digital_twin_relationship_id=digital_twin_relationship_id)
-        return digital_twin_relationship.data
+        # Convert to pydantic model for validation and structured output
+        from .models import DigitalTwinRelationshipModel
+        return DigitalTwinRelationshipModel.model_validate(digital_twin_relationship.data).model_dump()
     except Exception as e:
         logger.error(f"Error getting digital twin relationship {digital_twin_relationship_id}: {e}")
         raise
@@ -177,7 +187,9 @@ def get_iot_domain(
     try:
         iot_client = get_iot_client()
         iot_domain = iot_client.get_iot_domain(iot_domain_id=iot_domain_id)
-        return iot_domain.data
+        # Convert to pydantic model for validation and structured output
+        from .models import IoTDomainModel
+        return IoTDomainModel.model_validate(iot_domain.data).model_dump()
     except Exception as e:
         logger.error(f"Error getting IoT domain {iot_domain_id}: {e}")
         raise
@@ -192,7 +204,9 @@ def get_iot_domain_group(
     try:
         iot_client = get_iot_client()
         iot_domain_group = iot_client.get_iot_domain_group(iot_domain_group_id=iot_domain_group_id)
-        return iot_domain_group.data
+        # Convert to pydantic model for validation and structured output
+        from .models import IoTDomainGroupModel
+        return IoTDomainGroupModel.model_validate(iot_domain_group.data).model_dump()
     except Exception as e:
         logger.error(f"Error getting IoT domain group {iot_domain_group_id}: {e}")
         raise
@@ -207,7 +221,9 @@ def get_work_request(
     try:
         iot_client = get_iot_client()
         work_request = iot_client.get_work_request(work_request_id=work_request_id)
-        return work_request.data
+        # Convert to pydantic model for validation and structured output
+        from .models import WorkRequestModel
+        return WorkRequestModel.model_validate(work_request.data).model_dump()
     except Exception as e:
         logger.error(f"Error getting work request {work_request_id}: {e}")
         raise
@@ -222,7 +238,9 @@ def list_digital_twin_adapters(
     try:
         iot_client = get_iot_client()
         digital_twin_adapters = iot_client.list_digital_twin_adapters(iot_domain_id=iot_domain_id)
-        return digital_twin_adapters.data
+        # Convert to pydantic models for validation and structured output
+        from .models import DigitalTwinAdapterModel
+        return [DigitalTwinAdapterModel.model_validate(adapter).model_dump() for adapter in digital_twin_adapters.data]
     except Exception as e:
         logger.error(f"Error listing digital twin adapters for domain {iot_domain_id}: {e}")
         raise
@@ -237,7 +255,9 @@ def list_digital_twin_models(
     try:
         iot_client = get_iot_client()
         digital_twin_models = iot_client.list_digital_twin_models(iot_domain_id=iot_domain_id)
-        return digital_twin_models.data
+        # Convert to pydantic models for validation and structured output
+        from .models import DigitalTwinModelModel
+        return [DigitalTwinModelModel.model_validate(model).model_dump() for model in digital_twin_models.data]
     except Exception as e:
         logger.error(f"Error listing digital twin models for domain {iot_domain_id}: {e}")
         raise
@@ -246,13 +266,16 @@ def list_digital_twin_models(
     description="Lists digital twin instances in a specified IoT domain."
 )
 def list_digital_twin_instances(
-    iot_domain_id: Annotated[str, "The IoT domain identifier"]
+    iot_domain_id: Annotated[str, "The IoT domain identifier"],
+    limit: Annotated[int, "The limit of results"] = 1000
 ):
     """List digital twin instances in a specified IoT domain."""
     try:
         iot_client = get_iot_client()
-        digital_twin_instances = iot_client.list_digital_twin_instances(iot_domain_id=iot_domain_id)
-        return digital_twin_instances.data
+        digital_twin_instances = iot_client.list_digital_twin_instances(iot_domain_id=iot_domain_id,limit=limit)
+        # Convert to pydantic models for validation and structured output
+        from .models import DigitalTwinInstanceModel
+        return [DigitalTwinInstanceModel.model_validate(instance).model_dump() for instance in digital_twin_instances.data]
     except Exception as e:
         logger.error(f"Error listing digital twin instances for domain {iot_domain_id}: {e}")
         raise
@@ -267,7 +290,9 @@ def list_digital_twin_relationships(
     try:
         iot_client = get_iot_client()
         digital_twin_relationships = iot_client.list_digital_twin_relationships(iot_domain_id=iot_domain_id)
-        return digital_twin_relationships.data
+        # Convert to pydantic models for validation and structured output
+        from .models import DigitalTwinRelationshipModel
+        return [DigitalTwinRelationshipModel.model_validate(relationship).model_dump() for relationship in digital_twin_relationships.data]
     except Exception as e:
         logger.error(f"Error listing digital twin relationships for domain {iot_domain_id}: {e}")
         raise
@@ -282,7 +307,9 @@ def list_iot_domain_groups(
     try:
         iot_client = get_iot_client()
         domain_groups = iot_client.list_iot_domain_groups(compartment_id=compartment_id)
-        return domain_groups.data
+        # Convert to pydantic models for validation and structured output
+        from .models import IoTDomainGroupModel
+        return [IoTDomainGroupModel.model_validate(domain_group).model_dump() for domain_group in domain_groups.data]
     except Exception as e:
         logger.error(f"Error listing IoT domain groups for compartment {compartment_id}: {e}")
         raise
@@ -297,7 +324,9 @@ def list_iot_domains(
     try:
         iot_client = get_iot_client()
         domains = iot_client.list_iot_domains(compartment_id=compartment_id)
-        return domains.data
+        # Convert to pydantic models for validation and structured output
+        from .models import IoTDomainModel
+        return [IoTDomainModel.model_validate(domain).model_dump() for domain in domains.data]
     except Exception as e:
         logger.error(f"Error listing IoT domains for compartment {compartment_id}: {e}")
         raise
@@ -312,7 +341,9 @@ def list_work_request_errors(
     try:
         iot_client = get_iot_client()
         work_request_errors = iot_client.list_work_request_errors(work_request_id=work_request_id)
-        return work_request_errors.data
+        # Convert to pydantic models for validation and structured output
+        from .models import ErrorModel
+        return [ErrorModel.model_validate(error).model_dump() for error in work_request_errors.data]
     except Exception as e:
         logger.error(f"Error listing work request errors for {work_request_id}: {e}")
         raise
@@ -327,7 +358,9 @@ def list_work_request_logs(
     try:
         iot_client = get_iot_client()
         work_request_logs = iot_client.list_work_request_logs(work_request_id=work_request_id)
-        return work_request_logs.data
+        # Convert to pydantic models for validation and structured output
+        from .models import LogModel
+        return [LogModel.model_validate(log).model_dump() for log in work_request_logs.data]
     except Exception as e:
         logger.error(f"Error listing work request logs for {work_request_id}: {e}")
         raise
@@ -342,7 +375,9 @@ def list_work_requests(
     try:
         iot_client = get_iot_client()
         work_requests = iot_client.list_work_requests(compartment_id=compartment_id)
-        return work_requests.data
+        # Convert to pydantic models for validation and structured output
+        from .models import WorkRequestModel
+        return [WorkRequestModel.model_validate(work_request).model_dump() for work_request in work_requests.data]
     except Exception as e:
         logger.error(f"Error listing work requests for compartment {compartment_id}: {e}")
         raise

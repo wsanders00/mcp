@@ -12,6 +12,7 @@ authors = [
 dependencies = [
     "fastmcp==2.12.2",
     "oci>=2.165.1",
+    "pydantic>=2.5.0",
 ]
 
 classifiers = [
