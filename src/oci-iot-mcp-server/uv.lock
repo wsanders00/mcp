@@ -504,7 +504,7 @@ wheels = [
 
 [[package]]
 name = "oci"
-version = "2.161.1"
+version = "2.166.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
@@ -514,9 +514,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "pytz" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/81/71/43169e5f9b1a63a355ec31281466688bf24d717eecc5fed234c1fba2a51d/oci-2.161.1.tar.gz", hash = "sha256:e040ef83ad9497351fe9f49a22f22fe8ffcae18abb7685f080a7444a98f6e680", size = 15883954, upload-time = "2025-10-21T17:28:11.631Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/db/27/a8d2500545a0e244b26cff7d5cee2eabdd4f6a1feb923a25029050143e78/oci-2.166.0.tar.gz", hash = "sha256:a039162e2ef1cde591a779d0476bd25f08abdc72e99f10d7bc3260670e133c5b", size = 16486524, upload-time = "2026-01-27T03:55:09.761Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ea/75/0b197c319b1d20b03f521b7421823ed981b6e893cc10f5d4784e051b0cbb/oci-2.161.1-py3-none-any.whl", hash = "sha256:13dd9aea3f58fc2952309ac6067853b114d9eb61ebdfad3c43d443cef82b45ed", size = 32356655, upload-time = "2025-10-21T17:28:04.847Z" },
+    { url = "https://files.pythonhosted.org/packages/be/f9/3a0d243f428bfeb6799fdbdcb6bf9facdfb81e1188442b582b504dd32100/oci-2.166.0-py3-none-any.whl", hash = "sha256:ef050579f2941b24adb7c694ee6030c60fd9ab02a13a2491ca1690897c131cb3", size = 33503204, upload-time = "2026-01-27T03:55:02.007Z" },
 ]
 
 [[package]]
@@ -587,6 +587,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
     { name = "oci" },
+    { name = "pydantic" },
 ]
 
 [package.dev-dependencies]
@@ -598,7 +599,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastmcp", specifier = "==2.12.2" },
-    { name = "oci", specifier = ">=2.161.1" },
+    { name = "oci", specifier = ">=2.165.1" },
+    { name = "pydantic", specifier = ">=2.5.0" },
 ]
 
 [package.metadata.requires-dev]
