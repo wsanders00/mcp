@@ -20,7 +20,56 @@ from oracle.oci_identity_mcp_server.server import mcp
 class TestIdentityTools:
     @pytest.mark.asyncio
     @patch("oracle.oci_identity_mcp_server.server.get_identity_client")
-    async def test_list_compartments(self, mock_get_client):
+    @patch("oracle.oci_identity_mcp_server.server.oci.config.from_file")
+    async def test_list_compartments(self, mock_config_from_file, mock_get_client):
+        mock_config_from_file.return_value = {"tenancy": "test_tenancy"}
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        mock_list_response = create_autospec(oci.response.Response)
+        mock_get_response = create_autospec(oci.response.Response)
+        mock_list_response.data = [
+            oci.identity.models.Compartment(
+                id="compartment1",
+                compartment_id="compartment1",
+                name="Compartment 1",
+                description="Test compartment",
+                lifecycle_state="ACTIVE",
+                time_created="1970-01-01T00:00:00",
+            )
+        ]
+
+        mock_get_response.data = oci.identity.models.Compartment(
+            id="tenancy1",
+            compartment_id=None,
+            name="Root Compartment",
+            description="Test compartment (root)",
+            lifecycle_state="ACTIVE",
+            time_created="1970-01-01T00:00:00",
+        )
+        mock_list_response.has_next_page = False
+        mock_list_response.next_page = None
+        mock_client.list_compartments.return_value = mock_list_response
+        mock_client.get_compartment.return_value = mock_get_response
+
+        async with Client(mcp) as client:
+            result = (
+                await client.call_tool(
+                    "list_compartments",
+                    {
+                        "compartment_id": "test_tenancy",
+                        "compartment_id_in_subtree": True,
+                    },
+                )
+            ).structured_content["result"]
+
+            assert len(result) == 2
+            assert result[0]["id"] == "compartment1"
+            assert result[1]["id"] == "tenancy1"
+
+    @pytest.mark.asyncio
+    @patch("oracle.oci_identity_mcp_server.server.get_identity_client")
+    async def test_list_compartments_without_root(self, mock_get_client):
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
 
@@ -45,6 +94,8 @@ class TestIdentityTools:
                     "list_compartments",
                     {
                         "compartment_id": "test_tenancy",
+                        "compartment_id_in_subtree": True,
+                        "include_root": False,
                     },
                 )
             ).structured_content["result"]
@@ -53,16 +104,40 @@ class TestIdentityTools:
             assert result[0]["id"] == "compartment1"
 
     @pytest.mark.asyncio
+    @patch("oracle.oci_identity_mcp_server.server.oci.config.from_file")
     @patch("oracle.oci_identity_mcp_server.server.get_identity_client")
-    async def test_list_compartments_pagination_without_limit(self, mock_get_client):
+    async def test_list_compartments_pagination_without_limit(self, mock_get_client, mock_config_from_file):
+        mock_config_from_file.return_value = {"tenancy": "test_tenancy"}
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
+
+        mock_get_response = create_autospec(oci.response.Response)
+        mock_get_response.data = oci.identity.models.Compartment(
+            id="tenancy1",
+            compartment_id=None,
+            name="Root Compartment",
+            description="Test compartment (root)",
+            lifecycle_state="ACTIVE",
+            time_created="1970-01-01T00:00:00",
+        )
 
         # Page 1
         resp1 = create_autospec(oci.response.Response)
         resp1.data = [
-            oci.identity.models.Compartment(id="c1", name="C1"),
-            oci.identity.models.Compartment(id="c2", name="C2"),
+            oci.identity.models.Compartment(
+                id="c1",
+                name="C1",
+                description="Test compartment",
+                lifecycle_state="ACTIVE",
+                time_created="1970-01-01T00:00:00",
+            ),
+            oci.identity.models.Compartment(
+                id="c2",
+                name="C2",
+                description="Test compartment",
+                lifecycle_state="ACTIVE",
+                time_created="1970-01-01T00:00:00",
+            ),
         ]
         resp1.has_next_page = True
         resp1.next_page = "p2"
@@ -70,12 +145,19 @@ class TestIdentityTools:
         # Page 2
         resp2 = create_autospec(oci.response.Response)
         resp2.data = [
-            oci.identity.models.Compartment(id="c3", name="C3"),
+            oci.identity.models.Compartment(
+                id="c3",
+                name="C3",
+                description="Test compartment",
+                lifecycle_state="ACTIVE",
+                time_created="1970-01-01T00:00:00",
+            ),
         ]
         resp2.has_next_page = False
         resp2.next_page = None
 
         mock_client.list_compartments.side_effect = [resp1, resp2]
+        mock_client.get_compartment.return_value = mock_get_response
 
         async with Client(mcp) as client:
             result = (
@@ -87,8 +169,8 @@ class TestIdentityTools:
                 )
             ).structured_content["result"]
 
-        assert len(result) == 3
-        assert [r["id"] for r in result] == ["c1", "c2", "c3"]
+        assert len(result) == 4
+        assert [r["id"] for r in result] == ["c1", "c2", "c3", "tenancy1"]
 
         # Verify pagination call args across pages
         first_kwargs = mock_client.list_compartments.call_args_list[0].kwargs
@@ -99,16 +181,40 @@ class TestIdentityTools:
         assert second_kwargs["limit"] is None
 
     @pytest.mark.asyncio
+    @patch("oracle.oci_identity_mcp_server.server.oci.config.from_file")
     @patch("oracle.oci_identity_mcp_server.server.get_identity_client")
-    async def test_list_compartments_limit_stops_pagination(self, mock_get_client):
+    async def test_list_compartments_limit_stops_pagination(self, mock_get_client, mock_config_from_file):
+        mock_config_from_file.return_value = {"tenancy": "test_tenancy"}
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
+
+        mock_get_response = create_autospec(oci.response.Response)
+        mock_get_response.data = oci.identity.models.Compartment(
+            id="tenancy1",
+            compartment_id=None,
+            name="Root Compartment",
+            description="Test compartment (root)",
+            lifecycle_state="ACTIVE",
+            time_created="1970-01-01T00:00:00",
+        )
 
         # Page 1
         resp1 = create_autospec(oci.response.Response)
         resp1.data = [
-            oci.identity.models.Compartment(id="c1", name="C1"),
-            oci.identity.models.Compartment(id="c2", name="C2"),
+            oci.identity.models.Compartment(
+                id="c1",
+                name="C1",
+                description="Test compartment",
+                lifecycle_state="ACTIVE",
+                time_created="1970-01-01T00:00:00",
+            ),
+            oci.identity.models.Compartment(
+                id="c2",
+                name="C2",
+                description="Test compartment",
+                lifecycle_state="ACTIVE",
+                time_created="1970-01-01T00:00:00",
+            ),
         ]
         resp1.has_next_page = True
         resp1.next_page = "p2"
@@ -116,12 +222,19 @@ class TestIdentityTools:
         # Page 2 (would exist, but should not be called due to limit)
         resp2 = create_autospec(oci.response.Response)
         resp2.data = [
-            oci.identity.models.Compartment(id="c3", name="C3"),
+            oci.identity.models.Compartment(
+                id="c3",
+                name="C3",
+                description="Test compartment",
+                lifecycle_state="ACTIVE",
+                time_created="1970-01-01T00:00:00",
+            ),
         ]
         resp2.has_next_page = False
         resp2.next_page = None
 
         mock_client.list_compartments.side_effect = [resp1, resp2]
+        mock_client.get_compartment.return_value = mock_get_response
 
         limit = 2
         async with Client(mcp) as client:
@@ -135,8 +248,8 @@ class TestIdentityTools:
                 )
             ).structured_content["result"]
 
-        assert len(result) == 2
-        assert [r["id"] for r in result] == ["c1", "c2"]
+        assert len(result) == 3
+        assert [r["id"] for r in result] == ["c1", "c2", "tenancy1"]
         # With limit, only first page should be fetched
         assert mock_client.list_compartments.call_count == 1
         first_kwargs = mock_client.list_compartments.call_args_list[0].kwargs
@@ -266,17 +379,13 @@ class TestIdentityTools:
     @pytest.mark.asyncio
     @patch("oracle.oci_identity_mcp_server.server.get_identity_client")
     @patch("oracle.oci_identity_mcp_server.server.oci.config.from_file")
-    async def test_get_current_user_from_config_user(
-        self, mock_config_from_file, mock_get_client
-    ):
+    async def test_get_current_user_from_config_user(self, mock_config_from_file, mock_get_client):
         mock_config_from_file.return_value = {"user": "test_user"}
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
 
         mock_get_response = create_autospec(oci.response.Response)
-        mock_get_response.data = oci.identity.models.User(
-            id="user1", name="User 1", description="Test user"
-        )
+        mock_get_response.data = oci.identity.models.User(id="user1", name="User 1", description="Test user")
         mock_client.get_user.return_value = mock_get_response
 
         async with Client(mcp) as client:
@@ -289,16 +398,8 @@ class TestIdentityTools:
             assert result["id"] == "user1"
 
     def _make_jwt(self, payload_dict: dict) -> str:
-        header_b64 = (
-            base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode())
-            .decode()
-            .rstrip("=")
-        )
-        payload_b64 = (
-            base64.urlsafe_b64encode(json.dumps(payload_dict).encode())
-            .decode()
-            .rstrip("=")
-        )
+        header_b64 = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).decode().rstrip("=")
+        payload_b64 = base64.urlsafe_b64encode(json.dumps(payload_dict).encode()).decode().rstrip("=")
         return f"{header_b64}.{payload_b64}.signature"
 
     @pytest.mark.asyncio
@@ -325,9 +426,7 @@ class TestIdentityTools:
 
         with patch("builtins.open", m):
             async with Client(mcp) as client:
-                result = (
-                    await client.call_tool("get_current_user", {})
-                ).structured_content
+                result = (await client.call_tool("get_current_user", {})).structured_content
                 assert result["id"] == "user-sub"
                 # Ensure client.get_user called with derived OCID
                 mock_client.get_user.assert_called_once_with("ocid1.user.oc1..sub")
@@ -355,9 +454,7 @@ class TestIdentityTools:
 
         with patch("builtins.open", m):
             async with Client(mcp) as client:
-                result = (
-                    await client.call_tool("get_current_user", {})
-                ).structured_content
+                result = (await client.call_tool("get_current_user", {})).structured_content
                 assert result["id"] == "user-opc"
                 mock_client.get_user.assert_called_once_with("ocid1.user.oc1..opc")
 
@@ -387,9 +484,7 @@ class TestIdentityTools:
         mock_get_client.return_value = mock_client
 
         mock_response_p1 = create_autospec(oci.response.Response)
-        mock_response_p1.data = [
-            oci.identity.models.Compartment(name="WrongName", id="wrong_id")
-        ]
+        mock_response_p1.data = [oci.identity.models.Compartment(name="WrongName", id="wrong_id")]
         mock_response_p1.has_next_page = True
         mock_response_p1.next_page = "page_2_token"
 
@@ -560,13 +655,9 @@ async def test_get_current_tenancy_with_env_override(mock_from_file, mock_get_cl
     )
     mock_client.get_tenancy.return_value = mock_get_response
 
-    with patch.dict(
-        os.environ, {"TENANCY_ID_OVERRIDE": "ocid1.tenancy.oc1..override"}, clear=False
-    ):
+    with patch.dict(os.environ, {"TENANCY_ID_OVERRIDE": "ocid1.tenancy.oc1..override"}, clear=False):
         async with Client(mcp) as client:
-            result = (
-                await client.call_tool("get_current_tenancy", {})
-            ).structured_content
+            result = (await client.call_tool("get_current_tenancy", {})).structured_content
             assert result["id"] == "tenancy1"
 
     mock_client.get_tenancy.assert_called_once_with("ocid1.tenancy.oc1..override")
@@ -593,18 +684,14 @@ async def test_list_availability_domains_exception_propagates(mock_get_client):
 
     async with Client(mcp) as client:
         with pytest.raises(ToolError):
-            await client.call_tool(
-                "list_availability_domains", {"compartment_id": "ocid1.tenancy"}
-            )
+            await client.call_tool("list_availability_domains", {"compartment_id": "ocid1.tenancy"})
 
 
 @pytest.mark.asyncio
 @patch("oracle.oci_identity_mcp_server.server.get_identity_client")
 @patch("oracle.oci_identity_mcp_server.server.os.path.exists")
 @patch("oracle.oci_identity_mcp_server.server.oci.config.from_file")
-async def test_get_current_user_invalid_token_decode_raises(
-    mock_from_file, mock_exists, mock_get_client
-):
+async def test_get_current_user_invalid_token_decode_raises(mock_from_file, mock_exists, mock_get_client):
     mock_from_file.return_value = {"security_token_file": "/tmp/token.txt"}
     mock_exists.return_value = True
     invalid_token = "a.b.c"  # invalid base64 payload to trigger decode error
@@ -619,9 +706,7 @@ async def test_get_current_user_invalid_token_decode_raises(
 class TestGetClient:
     @patch("oracle.oci_identity_mcp_server.server.oci.identity.IdentityClient")
     @patch("oracle.oci_identity_mcp_server.server.oci.auth.signers.SecurityTokenSigner")
-    @patch(
-        "oracle.oci_identity_mcp_server.server.oci.signer.load_private_key_from_file"
-    )
+    @patch("oracle.oci_identity_mcp_server.server.oci.signer.load_private_key_from_file")
     @patch(
         "oracle.oci_identity_mcp_server.server.open",
         new_callable=mock_open,
@@ -654,25 +739,26 @@ class TestGetClient:
         result = server.get_identity_client()
 
         # Assert calls
-        mock_from_file.assert_called_once_with(profile_name="MYPROFILE")
-        mock_open_file.assert_called_once_with("/abs/path/to/token", "r")
-        mock_security_token_signer.assert_called_once_with(
-            "SECURITY_TOKEN", private_key_obj
+        mock_from_file.assert_called_once_with(
+            file_location=oci.config.DEFAULT_LOCATION,
+            profile_name="MYPROFILE",
         )
+        mock_open_file.assert_called_once_with("/abs/path/to/token", "r")
+        mock_security_token_signer.assert_called_once_with("SECURITY_TOKEN", private_key_obj)
         # Ensure user agent was set on the same config dict passed into client
         args, _ = mock_client.call_args
         passed_config = args[0]
         assert passed_config is config
-        expected_user_agent = f"{server.__project__.split('oracle.', 1)[1].split('-server', 1)[0]}/{server.__version__}"  # noqa
+        expected_user_agent = (
+            f"{server.__project__.split('oracle.', 1)[1].split('-server', 1)[0]}/{server.__version__}"  # noqa
+        )
         assert passed_config.get("additional_user_agent") == expected_user_agent
         # And we returned the client instance
         assert result == mock_client.return_value
 
     @patch("oracle.oci_identity_mcp_server.server.oci.identity.IdentityClient")
     @patch("oracle.oci_identity_mcp_server.server.oci.auth.signers.SecurityTokenSigner")
-    @patch(
-        "oracle.oci_identity_mcp_server.server.oci.signer.load_private_key_from_file"
-    )
+    @patch("oracle.oci_identity_mcp_server.server.oci.signer.load_private_key_from_file")
     @patch(
         "oracle.oci_identity_mcp_server.server.open",
         new_callable=mock_open,
@@ -700,7 +786,10 @@ class TestGetClient:
         srv_client = server.get_identity_client()
 
         # Assert: profile defaulted
-        mock_from_file.assert_called_once_with(profile_name=oci.config.DEFAULT_PROFILE)
+        mock_from_file.assert_called_once_with(
+            file_location=oci.config.DEFAULT_LOCATION,
+            profile_name=oci.config.DEFAULT_PROFILE,
+        )
         # Token file opened and read
         mock_open_file.assert_called_once_with("/tkn", "r")
         mock_security_token_signer.assert_called_once()
@@ -711,9 +800,6 @@ class TestGetClient:
         cc_args, _ = mock_client.call_args
         assert cc_args[0] is config
         assert "additional_user_agent" in config
-        assert (
-            isinstance(config["additional_user_agent"], str)
-            and "/" in config["additional_user_agent"]
-        )
+        assert isinstance(config["additional_user_agent"], str) and "/" in config["additional_user_agent"]
         # Returned object is client instance
         assert srv_client is mock_client.return_value

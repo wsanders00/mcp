@@ -35,7 +35,8 @@ mcp = FastMCP(name=__project__)
 
 def get_networking_client():
     config = oci.config.from_file(
-        profile_name=os.getenv("OCI_CONFIG_PROFILE", oci.config.DEFAULT_PROFILE)
+        file_location=os.getenv("OCI_CONFIG_FILE", oci.config.DEFAULT_LOCATION),
+        profile_name=os.getenv("OCI_CONFIG_PROFILE", oci.config.DEFAULT_PROFILE),
     )
     user_agent_name = __project__.split("oracle.", 1)[1].split("-server", 1)[0]
     config["additional_user_agent"] = f"{user_agent_name}/{__version__}"
@@ -48,7 +49,7 @@ def get_networking_client():
     return oci.core.VirtualNetworkClient(config, signer=signer)
 
 
-@mcp.tool
+@mcp.tool(description="Lists the VCNs in the specified compartment.")
 def list_vcns(compartment_id: str) -> list[Vcn]:
     vcns: list[Vcn] = []
 
@@ -77,7 +78,7 @@ def list_vcns(compartment_id: str) -> list[Vcn]:
         raise
 
 
-@mcp.tool
+@mcp.tool(description="Gets the specified VCN's information.")
 def get_vcn(vcn_id: str) -> Vcn:
     try:
         client = get_networking_client()
@@ -92,7 +93,7 @@ def get_vcn(vcn_id: str) -> Vcn:
         raise
 
 
-@mcp.tool
+@mcp.tool(description="Deletes the specified VCN.")
 def delete_vcn(vcn_id: str) -> Response:
     try:
         client = get_networking_client()
@@ -106,7 +107,7 @@ def delete_vcn(vcn_id: str) -> Response:
         raise
 
 
-@mcp.tool
+@mcp.tool(description="Creates a new VCN.")
 def create_vcn(compartment_id: str, cidr_block: str, display_name: str) -> Vcn:
     try:
         client = get_networking_client()
@@ -127,7 +128,9 @@ def create_vcn(compartment_id: str, cidr_block: str, display_name: str) -> Vcn:
         raise
 
 
-@mcp.tool
+@mcp.tool(
+    description="Lists the subnets in the specified compartment. Optionally filter by VCN."
+)
 def list_subnets(compartment_id: str, vcn_id: str = None) -> list[Subnet]:
     subnets: list[Subnet] = []
 
@@ -139,9 +142,7 @@ def list_subnets(compartment_id: str, vcn_id: str = None) -> list[Subnet]:
         next_page: str = None
 
         while has_next_page:
-            response = client.list_subnets(
-                compartment_id=compartment_id, vcn_id=vcn_id, page=next_page
-            )
+            response = client.list_subnets(compartment_id=compartment_id, vcn_id=vcn_id, page=next_page)
             has_next_page = response.has_next_page
             next_page = response.next_page if hasattr(response, "next_page") else None
 
@@ -158,7 +159,7 @@ def list_subnets(compartment_id: str, vcn_id: str = None) -> list[Subnet]:
         raise
 
 
-@mcp.tool
+@mcp.tool(description="Gets the specified subnet's information.")
 def get_subnet(subnet_id: str) -> Subnet:
     try:
         client = get_networking_client()
@@ -173,7 +174,7 @@ def get_subnet(subnet_id: str) -> Subnet:
         raise
 
 
-@mcp.tool
+@mcp.tool(description="Creates a new subnet.")
 def create_subnet(
     vcn_id: str, compartment_id: str, cidr_block: str, display_name: str
 ) -> Subnet:
@@ -252,10 +253,8 @@ def get_security_list(security_list_id: Annotated[str, "security list id"]):
 
 
 @mcp.tool(
-    description="Lists either the network security groups in the specified compartment,"
-    "or those associated with the specified VLAN. You must specify either a vlanId or"
-    "a compartmentId, but not both. If you specify a vlanId, all other parameters are "
-    "ignored.",
+    description="Lists the network security groups in the specified compartment. "
+    "Optionally filter by vcn_id or vlan_id.",
 )
 def list_network_security_groups(
     compartment_id: Annotated[str, "compartment ocid"],
@@ -303,9 +302,7 @@ def get_network_security_group(
     try:
         client = get_networking_client()
 
-        response: oci.response.Response = client.get_network_security_group(
-            network_security_group_id
-        )
+        response: oci.response.Response = client.get_network_security_group(network_security_group_id)
         data: oci.core.models.Subnet = response.data
         logger.info("Found Network Security Group")
         return map_network_security_group(data)

@@ -8,7 +8,7 @@ import base64
 import json
 import os
 from logging import Logger
-from typing import Optional
+from typing import Literal, Optional
 
 import oci
 from fastmcp import FastMCP
@@ -37,7 +37,8 @@ mcp = FastMCP(name=__project__)
 
 def get_identity_client():
     config = oci.config.from_file(
-        profile_name=os.getenv("OCI_CONFIG_PROFILE", oci.config.DEFAULT_PROFILE)
+        file_location=os.getenv("OCI_CONFIG_FILE", oci.config.DEFAULT_LOCATION),
+        profile_name=os.getenv("OCI_CONFIG_PROFILE", oci.config.DEFAULT_PROFILE),
     )
     user_agent_name = __project__.split("oracle.", 1)[1].split("-server", 1)[0]
     config["additional_user_agent"] = f"{user_agent_name}/{__version__}"
@@ -49,11 +50,30 @@ def get_identity_client():
     return oci.identity.IdentityClient(config, signer=signer)
 
 
-@mcp.tool(description="List compartments in a given compartment")
+@mcp.tool(description="List compartments in a given compartment or tenancy.")
 def list_compartments(
     compartment_id: str = Field(
         ...,
         description="The OCID of the compartment (remember that the tenancy is simply the root compartment)",
+    ),
+    compartment_id_in_subtree: Optional[bool] = Field(
+        False,
+        description="Can only be set to true when performing ListCompartments on the tenancy "
+        "(root compartment). When set to true, the hierarchy of compartments is "
+        "traversed and all compartments and subcompartments in the tenancy are returned "
+        "depending on the the setting of accessLevel",
+    ),
+    access_level: Optional[Literal["ANY", "ACCESSIBLE"]] = Field(
+        "ANY",
+        description="Setting this to ACCESSIBLE returns only those compartments for which the user has "
+        "INSPECT permissions directly or indirectly (permissions can be on a resource in a subcompartment). "
+        "For the compartments on which the user indirectly has INSPECT permissions, a restricted set of "
+        "fields is returned. When set to ANY permissions are not checked.",
+    ),
+    include_root: Optional[bool] = Field(
+        True,
+        description="Whether to include the root compartment in the response. "
+        "Always include the root compartment in the response unless the user asks for it to not be included.",
     ),
     limit: Optional[int] = Field(
         None,
@@ -75,6 +95,8 @@ def list_compartments(
                 "compartment_id": compartment_id,
                 "page": next_page,
                 "limit": limit,
+                "compartment_id_in_subtree": compartment_id_in_subtree,
+                "access_level": access_level,
             }
 
             response = client.list_compartments(**kwargs)
@@ -85,6 +107,17 @@ def list_compartments(
             for d in data:
                 compartments.append(map_compartment(d))
 
+        if include_root:
+            config = oci.config.from_file(
+                file_location=os.getenv("OCI_CONFIG_FILE", oci.config.DEFAULT_LOCATION),
+                profile_name=os.getenv("OCI_CONFIG_PROFILE", oci.config.DEFAULT_PROFILE),
+            )
+            tenancy_id = os.getenv("TENANCY_ID_OVERRIDE", config["tenancy"])
+            tenancy_response: oci.response.Response = client.get_compartment(
+                compartment_id=tenancy_id,
+            )
+            root_compartment: Compartment = tenancy_response.data
+            compartments.append(map_compartment(root_compartment))
         logger.info(f"Found {len(compartments)} Compartments")
         return compartments
 
@@ -94,9 +127,7 @@ def list_compartments(
 
 
 @mcp.tool(description="Get tenancy with a given OCID")
-def get_tenancy(
-    tenancy_id: str = Field(..., description="The OCID of the tenancy")
-) -> Tenancy:
+def get_tenancy(tenancy_id: str = Field(..., description="The OCID of the tenancy")) -> Tenancy:
     try:
         client = get_identity_client()
 
@@ -142,7 +173,8 @@ def get_current_tenancy() -> Tenancy:
         client = get_identity_client()
 
         config = oci.config.from_file(
-            profile_name=os.getenv("OCI_CONFIG_PROFILE", oci.config.DEFAULT_PROFILE)
+            file_location=os.getenv("OCI_CONFIG_FILE", oci.config.DEFAULT_LOCATION),
+            profile_name=os.getenv("OCI_CONFIG_PROFILE", oci.config.DEFAULT_PROFILE),
         )
         tenancy_id = os.getenv("TENANCY_ID_OVERRIDE", config["tenancy"])
         response: oci.response.Response = client.get_tenancy(tenancy_id)
@@ -158,16 +190,12 @@ def get_current_tenancy() -> Tenancy:
 @mcp.tool
 def create_auth_token(
     user_id: str = Field(..., description="The OCID of the user"),
-    description: Optional[str] = Field(
-        "", description="The description of the auth token"
-    ),
+    description: Optional[str] = Field("", description="The description of the auth token"),
 ) -> AuthToken:
     try:
         client = get_identity_client()
 
-        create_auth_token_details = oci.identity.models.CreateAuthTokenDetails(
-            description=description
-        )
+        create_auth_token_details = oci.identity.models.CreateAuthTokenDetails(description=description)
 
         response: oci.response.Response = client.create_auth_token(
             user_id=user_id,
@@ -187,7 +215,8 @@ def get_current_user() -> User:
     try:
         client = get_identity_client()
         config = oci.config.from_file(
-            profile_name=os.getenv("OCI_CONFIG_PROFILE", oci.config.DEFAULT_PROFILE)
+            file_location=os.getenv("OCI_CONFIG_FILE", oci.config.DEFAULT_LOCATION),
+            profile_name=os.getenv("OCI_CONFIG_PROFILE", oci.config.DEFAULT_PROFILE),
         )
 
         # Prefer explicit user from config if present
@@ -205,9 +234,7 @@ def get_current_user() -> User:
                     try:
                         payload_b64 = token.split(".", 2)[1]
                         padding = "=" * (-len(payload_b64) % 4)
-                        payload_json = base64.urlsafe_b64decode(
-                            payload_b64 + padding
-                        ).decode("utf-8")
+                        payload_json = base64.urlsafe_b64decode(payload_b64 + padding).decode("utf-8")
                         payload = json.loads(payload_json)
                         # 'sub' typically contains the user OCID for session tokens;
                         # fallback to opc-user-id if present
@@ -216,9 +243,7 @@ def get_current_user() -> User:
                         user_id = None
 
             if not user_id:
-                raise KeyError(
-                    "Unable to determine current user OCID from config or security token"
-                )
+                raise KeyError("Unable to determine current user OCID from config or security token")
 
         response: oci.response.Response = client.get_user(user_id)
         data: oci.identity.models.User = response.data
@@ -230,9 +255,7 @@ def get_current_user() -> User:
         raise e
 
 
-@mcp.tool(
-    description="Get a specific compartment by its name within a parent compartment."
-)
+@mcp.tool(description="Get a specific compartment by its name within a parent compartment.")
 def get_compartment_by_name(
     name: str = Field(description="The name of the compartment to find."),
     parent_compartment_id: str = Field(
@@ -265,9 +288,7 @@ def get_compartment_by_name(
             has_next_page = response.has_next_page
             next_page = response.next_page if hasattr(response, "next_page") else None
 
-        logger.warning(
-            f"Compartment '{name}' not found in parent '{parent_compartment_id}'"
-        )
+        logger.warning(f"Compartment '{name}' not found in parent '{parent_compartment_id}'")
         return None
 
     except Exception as e:
@@ -277,7 +298,7 @@ def get_compartment_by_name(
 
 @mcp.tool(description="List the regions a tenancy is subscribed to.")
 def list_subscribed_regions(
-    tenancy_id: str = Field(..., description="The OCID of the tenancy.")
+    tenancy_id: str = Field(..., description="The OCID of the tenancy."),
 ) -> list[RegionSubscription]:
     regions: list[RegionSubscription] = []
 
