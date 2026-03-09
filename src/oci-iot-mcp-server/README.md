@@ -14,11 +14,15 @@ uv run oracle.oci-iot-mcp-server
 
 | Tool Name | Description |
 | --- | --- |
+| create_digital_twin_adapter | Creates a new digital twin adapter in a specified IoT domain |
 | get_digital_twin_adapter | Retrieves a specific digital twin adapter by its identifier |
+| create_digital_twin_instance | Creates a new digital twin instance in a specified IoT domain |
 | get_digital_twin_instance | Retrieves a specific digital twin instance by its identifier |
 | get_digital_twin_instance_content | Retrieves the content of a specific digital twin instance by its identifier |
+| create_digital_twin_model | Creates a new digital twin model in a specified IoT domain |
 | get_digital_twin_model | Retrieves a specific digital twin model by its identifier |
 | get_digital_twin_model_spec | Retrieves the specification of a specific digital twin model by its identifier |
+| create_digital_twin_relationship | Creates a new digital twin relationship in a specified IoT domain |
 | get_digital_twin_relationship | Retrieves a specific digital twin relationship by its identifier |
 | get_iot_domain | Retrieves a specific IoT domain by its identifier |
 | get_iot_domain_group | Retrieves a specific IoT domain group by its identifier |

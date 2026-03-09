@@ -212,3 +212,24 @@ class LogModel(BaseModel):
             message=getattr(model, "message", str(model)),
             timestamp=getattr(model, "timestamp", getattr(model, "time_stamp", None)),
         )
+
+
+class CompartmentModel(BaseModel):
+    id: str = Field(..., description="The compartment identifier")
+    name: Optional[str] = Field(None, description="The name of the compartment")
+    description: Optional[str] = Field(None, description="Description of the compartment")
+    parent_id: Optional[str] = Field(None, description="The parent compartment identifier")
+    lifecycle_state: Optional[str] = Field(None, description="Lifecycle state of the compartment")
+    created_at: Optional[datetime] = Field(None, description="Creation timestamp of the compartment")
+
+    @classmethod
+    def from_oci_model(cls, model: Any):
+        """Create a CompartmentModel from an OCI compartment object."""
+        return cls(
+            id=getattr(model, "id"),
+            name=getattr(model, "name", getattr(model, "display_name", None)),
+            description=getattr(model, "description", None),
+            parent_id=getattr(model, "compartment_id", getattr(model, "parent_id", None)),
+            lifecycle_state=getattr(model, "lifecycle_state", None),
+            created_at=getattr(model, "time_created", getattr(model, "created_at", None)),
+        )

@@ -4,16 +4,14 @@ Licensed under the Universal Permissive License v1.0 as shown at
 https://oss.oracle.com/licenses/upl.
 """
 
+import json
 import os
 import logging
-from logging import Logger
-from typing import Annotated, Optional
-from functools import lru_cache
+from typing import Annotated, Any, Optional
 
 import oci
 from fastmcp import FastMCP
-from oci.iot.models import IotDomainGroupCollection, IotDomainGroupSummary, IotDomainSummary, DigitalTwinModelSummary, DigitalTwinAdapterSummary, DigitalTwinInstanceSummary, DigitalTwinRelationshipSummary
-from oci.exceptions import ServiceError, ConfigFileNotFound, InvalidConfig
+from oci.exceptions import ConfigFileNotFound, InvalidConfig
 
 from . import __project__, __version__
 
@@ -26,6 +24,8 @@ mcp = FastMCP(name=__project__)
 
 # Global client cache
 _iot_client = None
+_identity_client = None
+_tenancy_id = None
 
 def _normalize_items(data):
     """Normalize OCI list response data into a list of items."""
@@ -36,6 +36,17 @@ def _normalize_items(data):
     if data is None:
         return []
     return [data]
+
+
+def _parse_json_input(value, field_name: str):
+    """Parse a JSON string input while leaving native Python values unchanged."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON for {field_name}: {e}")
+            raise ValueError(f"Invalid JSON for {field_name}: {e}") from e
+    return value
 
 def get_iot_client( profile_name: Annotated[Optional[str], "Stored/Authenticated OCI Profile"] = None):
     """
@@ -85,6 +96,51 @@ def get_iot_client( profile_name: Annotated[Optional[str], "Stored/Authenticated
         raise
     except Exception as e:
         logger.error(f"Error creating IoT client: {e}")
+        raise
+
+
+def get_identity_client(profile_name: Annotated[Optional[str], "Stored/Authenticated OCI Profile"] = None):
+    """
+    Get or create OCI Identity client with caching.
+
+    Args:
+        profile_name: OCI configuration profile name. If None, uses environment variable or default.
+
+    Returns:
+        Tuple of (IdentityClient instance, tenancy OCID)
+    """
+    global _identity_client, _tenancy_id
+
+    if profile_name is None:
+        profile_name = os.getenv("OCI_CONFIG_PROFILE", "DEFAULT")
+
+    if _identity_client is not None and _tenancy_id is not None:
+        return _identity_client, _tenancy_id
+
+    try:
+        logger.info(f"Creating Identity client for profile: {profile_name}")
+        config = oci.config.from_file(profile_name=profile_name)
+        user_agent_name = __project__.split("oracle.", 1)[1].split("-server", 1)[0]
+        config["additional_user_agent"] = f"{user_agent_name}/{__version__}"
+
+        private_key = oci.signer.load_private_key_from_file(config["key_file"])
+        token_file = config["security_token_file"]
+        with open(token_file, "r") as f:
+            token = f.read()
+        signer = oci.auth.signers.SecurityTokenSigner(token, private_key)
+
+        _identity_client = oci.identity.IdentityClient(config, signer=signer)
+        _tenancy_id = config["tenancy"]
+        logger.info("Identity client created successfully")
+        return _identity_client, _tenancy_id
+    except ConfigFileNotFound as e:
+        logger.error(f"OCI config file not found: {e}")
+        raise
+    except InvalidConfig as e:
+        logger.error(f"Invalid OCI configuration: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error creating Identity client: {e}")
         raise
 
 @mcp.tool(
@@ -183,6 +239,191 @@ def get_digital_twin_model_spec(
         return digital_twin_model_spec.data
     except Exception as e:
         logger.error(f"Error getting digital twin model spec {digital_twin_model_id}: {e}")
+        raise
+
+@mcp.tool(
+    description="Creates a new digital twin model in a specified IoT domain."
+)
+def create_digital_twin_model(
+    iot_domain_id: Annotated[str, "The IoT domain identifier"],
+    display_name: Annotated[str, "A user-friendly display name for the digital twin model"],
+    spec: Annotated[dict[str, Any] | str, "The DTDL v3 digital twin model specification as a JSON object or JSON string"],
+    description: Annotated[Optional[str], "A short description of the digital twin model"] = None,
+    opc_retry_token: Annotated[Optional[str], "A retry token for safely retrying the request"] = None,
+    opc_request_id: Annotated[Optional[str], "A unique Oracle-assigned identifier for the request"] = None,
+):
+    """Create a new digital twin model.
+
+    The specification must be valid DTDL v3 JSON content.
+    """
+    try:
+        iot_client = get_iot_client()
+
+        specification = _parse_json_input(spec, "spec")
+
+        create_digital_twin_model_details = oci.iot.models.CreateDigitalTwinModelDetails(
+            iot_domain_id=iot_domain_id,
+            display_name=display_name,
+            description=description,
+            specification=specification,
+        )
+
+        kwargs = {
+            "create_digital_twin_model_details": create_digital_twin_model_details,
+        }
+        if opc_retry_token is not None:
+            kwargs["opc_retry_token"] = opc_retry_token
+        if opc_request_id is not None:
+            kwargs["opc_request_id"] = opc_request_id
+
+        digital_twin_model = iot_client.create_digital_twin_model(**kwargs)
+        from .models import DigitalTwinModelModel
+        return DigitalTwinModelModel.from_oci_model(digital_twin_model.data).model_dump()
+    except Exception as e:
+        logger.error(f"Error creating digital twin model in domain {iot_domain_id}: {e}")
+        raise
+
+@mcp.tool(
+    description="Creates a new digital twin adapter in a specified IoT domain."
+)
+def create_digital_twin_adapter(
+    iot_domain_id: Annotated[str, "The IoT domain identifier"],
+    display_name: Annotated[Optional[str], "A user-friendly display name for the digital twin adapter"] = None,
+    description: Annotated[Optional[str], "A short description of the digital twin adapter"] = None,
+    digital_twin_model_id: Annotated[Optional[str], "The digital twin model OCID associated with the adapter"] = None,
+    digital_twin_model_spec_uri: Annotated[Optional[str], "The URI of the digital twin model specification"] = None,
+    inbound_envelope: Annotated[Optional[dict[str, Any] | str], "The adapter inbound envelope as a JSON object or JSON string"] = None,
+    inbound_routes: Annotated[Optional[list[dict[str, Any]] | str], "The adapter inbound routes as a JSON array or JSON string"] = None,
+    freeform_tags: Annotated[Optional[dict[str, str] | str], "Free-form tags as an object or JSON string"] = None,
+    defined_tags: Annotated[Optional[dict[str, dict[str, Any]] | str], "Defined tags as an object or JSON string"] = None,
+    opc_retry_token: Annotated[Optional[str], "A retry token for safely retrying the request"] = None,
+    opc_request_id: Annotated[Optional[str], "A unique Oracle-assigned identifier for the request"] = None,
+):
+    """Create a new digital twin adapter."""
+    try:
+        iot_client = get_iot_client()
+
+        create_digital_twin_adapter_details = oci.iot.models.CreateDigitalTwinAdapterDetails(
+            iot_domain_id=iot_domain_id,
+            display_name=display_name,
+            description=description,
+            digital_twin_model_id=digital_twin_model_id,
+            digital_twin_model_spec_uri=digital_twin_model_spec_uri,
+            inbound_envelope=_parse_json_input(inbound_envelope, "inbound_envelope"),
+            inbound_routes=_parse_json_input(inbound_routes, "inbound_routes"),
+            freeform_tags=_parse_json_input(freeform_tags, "freeform_tags"),
+            defined_tags=_parse_json_input(defined_tags, "defined_tags"),
+        )
+
+        kwargs = {
+            "create_digital_twin_adapter_details": create_digital_twin_adapter_details,
+        }
+        if opc_retry_token is not None:
+            kwargs["opc_retry_token"] = opc_retry_token
+        if opc_request_id is not None:
+            kwargs["opc_request_id"] = opc_request_id
+
+        digital_twin_adapter = iot_client.create_digital_twin_adapter(**kwargs)
+        from .models import DigitalTwinAdapterModel
+        return DigitalTwinAdapterModel.from_oci_model(digital_twin_adapter.data).model_dump()
+    except Exception as e:
+        logger.error(f"Error creating digital twin adapter in domain {iot_domain_id}: {e}")
+        raise
+
+@mcp.tool(
+    description="Creates a new digital twin instance in a specified IoT domain."
+)
+def create_digital_twin_instance(
+    iot_domain_id: Annotated[str, "The IoT domain identifier"],
+    auth_id: Annotated[Optional[str], "The OCID of the authentication resource for the instance"] = None,
+    external_key: Annotated[Optional[str], "A unique identifier for the physical entity represented by the twin"] = None,
+    display_name: Annotated[Optional[str], "A user-friendly display name for the digital twin instance"] = None,
+    description: Annotated[Optional[str], "A short description of the digital twin instance"] = None,
+    digital_twin_adapter_id: Annotated[Optional[str], "The digital twin adapter OCID associated with the instance"] = None,
+    digital_twin_model_id: Annotated[Optional[str], "The digital twin model OCID associated with the instance"] = None,
+    digital_twin_model_spec_uri: Annotated[Optional[str], "The URI of the digital twin model specification"] = None,
+    freeform_tags: Annotated[Optional[dict[str, str] | str], "Free-form tags as an object or JSON string"] = None,
+    defined_tags: Annotated[Optional[dict[str, dict[str, Any]] | str], "Defined tags as an object or JSON string"] = None,
+    opc_retry_token: Annotated[Optional[str], "A retry token for safely retrying the request"] = None,
+    opc_request_id: Annotated[Optional[str], "A unique Oracle-assigned identifier for the request"] = None,
+):
+    """Create a new digital twin instance."""
+    try:
+        iot_client = get_iot_client()
+
+        create_digital_twin_instance_details = oci.iot.models.CreateDigitalTwinInstanceDetails(
+            iot_domain_id=iot_domain_id,
+            auth_id=auth_id,
+            external_key=external_key,
+            display_name=display_name,
+            description=description,
+            digital_twin_adapter_id=digital_twin_adapter_id,
+            digital_twin_model_id=digital_twin_model_id,
+            digital_twin_model_spec_uri=digital_twin_model_spec_uri,
+            freeform_tags=_parse_json_input(freeform_tags, "freeform_tags"),
+            defined_tags=_parse_json_input(defined_tags, "defined_tags"),
+        )
+
+        kwargs = {
+            "create_digital_twin_instance_details": create_digital_twin_instance_details,
+        }
+        if opc_retry_token is not None:
+            kwargs["opc_retry_token"] = opc_retry_token
+        if opc_request_id is not None:
+            kwargs["opc_request_id"] = opc_request_id
+
+        digital_twin_instance = iot_client.create_digital_twin_instance(**kwargs)
+        from .models import DigitalTwinInstanceModel
+        return DigitalTwinInstanceModel.from_oci_model(digital_twin_instance.data).model_dump()
+    except Exception as e:
+        logger.error(f"Error creating digital twin instance in domain {iot_domain_id}: {e}")
+        raise
+
+@mcp.tool(
+    description="Creates a new digital twin relationship in a specified IoT domain."
+)
+def create_digital_twin_relationship(
+    iot_domain_id: Annotated[str, "The IoT domain identifier"],
+    content_path: Annotated[str, "The relationship name from the source digital twin model"],
+    source_digital_twin_instance_id: Annotated[str, "The source digital twin instance identifier"],
+    target_digital_twin_instance_id: Annotated[str, "The target digital twin instance identifier"],
+    display_name: Annotated[Optional[str], "A user-friendly display name for the digital twin relationship"] = None,
+    description: Annotated[Optional[str], "A short description of the digital twin relationship"] = None,
+    content: Annotated[Optional[dict[str, Any] | str], "The relationship property values as an object or JSON string"] = None,
+    freeform_tags: Annotated[Optional[dict[str, str] | str], "Free-form tags as an object or JSON string"] = None,
+    defined_tags: Annotated[Optional[dict[str, dict[str, Any]] | str], "Defined tags as an object or JSON string"] = None,
+    opc_retry_token: Annotated[Optional[str], "A retry token for safely retrying the request"] = None,
+    opc_request_id: Annotated[Optional[str], "A unique Oracle-assigned identifier for the request"] = None,
+):
+    """Create a new digital twin relationship."""
+    try:
+        iot_client = get_iot_client()
+
+        create_digital_twin_relationship_details = oci.iot.models.CreateDigitalTwinRelationshipDetails(
+            iot_domain_id=iot_domain_id,
+            content_path=content_path,
+            source_digital_twin_instance_id=source_digital_twin_instance_id,
+            target_digital_twin_instance_id=target_digital_twin_instance_id,
+            display_name=display_name,
+            description=description,
+            content=_parse_json_input(content, "content"),
+            freeform_tags=_parse_json_input(freeform_tags, "freeform_tags"),
+            defined_tags=_parse_json_input(defined_tags, "defined_tags"),
+        )
+
+        kwargs = {
+            "create_digital_twin_relationship_details": create_digital_twin_relationship_details,
+        }
+        if opc_retry_token is not None:
+            kwargs["opc_retry_token"] = opc_retry_token
+        if opc_request_id is not None:
+            kwargs["opc_request_id"] = opc_request_id
+
+        digital_twin_relationship = iot_client.create_digital_twin_relationship(**kwargs)
+        from .models import DigitalTwinRelationshipModel
+        return DigitalTwinRelationshipModel.from_oci_model(digital_twin_relationship.data).model_dump()
+    except Exception as e:
+        logger.error(f"Error creating digital twin relationship in domain {iot_domain_id}: {e}")
         raise
 
 @mcp.tool(
@@ -489,6 +730,47 @@ def list_work_requests(
         return [WorkRequestModel.from_oci_model(work_request).model_dump() for work_request in requests_list]
     except Exception as e:
         logger.error(f"Error listing work requests for compartment {compartment_id}: {e}")
+        raise
+
+
+@mcp.tool(
+    description="Lists all OCI compartments that the current user has access to."
+)
+def list_compartments(
+    include_root: Annotated[bool, "Include the root tenancy compartment"] = True
+):
+    """List all accessible OCI compartments for the authenticated user."""
+    try:
+        identity_client, tenancy_id = get_identity_client()
+        from .models import CompartmentModel
+
+        compartments = []
+
+        if include_root:
+            try:
+                root_compartment = identity_client.get_compartment(compartment_id=tenancy_id).data
+                compartments.append(root_compartment)
+            except Exception as root_error:
+                logger.warning(f"Unable to load root tenancy compartment {tenancy_id}: {root_error}")
+
+        list_result = oci.pagination.list_call_get_all_results(
+            identity_client.list_compartments,
+            compartment_id=tenancy_id,
+            compartment_id_in_subtree=True,
+            access_level="ACCESSIBLE",
+        )
+        compartments.extend(_normalize_items(list_result.data))
+
+        # De-duplicate by compartment OCID (root may also appear in list results in some tenancies).
+        deduped = {}
+        for compartment in compartments:
+            compartment_id = getattr(compartment, "id", None)
+            if compartment_id:
+                deduped[compartment_id] = compartment
+
+        return [CompartmentModel.from_oci_model(compartment).model_dump() for compartment in deduped.values()]
+    except Exception as e:
+        logger.error(f"Error listing compartments: {e}")
         raise
 
 @mcp.tool(
