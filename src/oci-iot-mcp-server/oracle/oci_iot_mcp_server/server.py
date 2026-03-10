@@ -201,13 +201,28 @@ def get_digital_twin_instance(
     description="Retrieves the content of a specific digital twin instance by its identifier."
 )
 def get_digital_twin_instance_content(
-    digital_twin_instance_id: Annotated[str, "The digital twin instance identifier"]
+    digital_twin_instance_id: Annotated[str, "The digital twin instance identifier"],
+    should_include_metadata: Annotated[
+        bool,
+        "If true, includes digital twin instance metadata in the response payload",
+    ] = False,
+    opc_request_id: Annotated[
+        Optional[str],
+        "A unique Oracle-assigned identifier for the request",
+    ] = None,
 ):
     """Get content of a specific digital twin instance by ID."""
     try:
         iot_client = get_iot_client()
-        digital_twin_instance_content = iot_client.get_digital_twin_instance_content(digital_twin_instance_id=digital_twin_instance_id)
-        # For content, return as-is since it's a string
+
+        kwargs = {
+            "digital_twin_instance_id": digital_twin_instance_id,
+            "should_include_metadata": should_include_metadata,
+        }
+        if opc_request_id is not None:
+            kwargs["opc_request_id"] = opc_request_id
+
+        digital_twin_instance_content = iot_client.get_digital_twin_instance_content(**kwargs)
         return digital_twin_instance_content.data
     except Exception as e:
         logger.error(f"Error getting digital twin instance content {digital_twin_instance_id}: {e}")

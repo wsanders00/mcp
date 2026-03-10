@@ -16,7 +16,7 @@ uv run oracle.oci-iot-mcp-server
 | --- | --- |
 | get_digital_twin_adapter | Retrieves a specific digital twin adapter by its identifier |
 | get_digital_twin_instance | Retrieves a specific digital twin instance by its identifier |
-| get_digital_twin_instance_content | Retrieves the content of a specific digital twin instance by its identifier |
+| get_digital_twin_instance_content | Retrieves the content of a specific digital twin instance by its identifier; set `should_include_metadata` to `true` to include metadata in the response |
 | get_digital_twin_model | Retrieves a specific digital twin model by its identifier |
 | get_digital_twin_model_spec | Retrieves the specification of a specific digital twin model by its identifier |
 | create_digital_twin_model | Creates a new digital twin model in a specified IoT domain |
