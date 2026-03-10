@@ -2,7 +2,7 @@
 
 ## Overview
 
-This server provides tools for interacting with Oracle Cloud Infrastructure (OCI) IoT Platform service.
+This server provides MCP tools for interacting with the Oracle Cloud Infrastructure (OCI) IoT service.
 
 ## Running the server
 
@@ -14,16 +14,36 @@ uv run oracle.oci-iot-mcp-server
 
 | Tool Name | Description |
 | --- | --- |
-| create_digital_twin_adapter | Creates a new digital twin adapter in a specified IoT domain |
 | get_digital_twin_adapter | Retrieves a specific digital twin adapter by its identifier |
-| create_digital_twin_instance | Creates a new digital twin instance in a specified IoT domain |
 | get_digital_twin_instance | Retrieves a specific digital twin instance by its identifier |
 | get_digital_twin_instance_content | Retrieves the content of a specific digital twin instance by its identifier |
-| create_digital_twin_model | Creates a new digital twin model in a specified IoT domain |
 | get_digital_twin_model | Retrieves a specific digital twin model by its identifier |
 | get_digital_twin_model_spec | Retrieves the specification of a specific digital twin model by its identifier |
+| create_digital_twin_model | Creates a new digital twin model in a specified IoT domain |
+| create_digital_twin_adapter | Creates a new digital twin adapter in a specified IoT domain |
+| create_digital_twin_instance | Creates a new digital twin instance in a specified IoT domain |
 | create_digital_twin_relationship | Creates a new digital twin relationship in a specified IoT domain |
 | get_digital_twin_relationship | Retrieves a specific digital twin relationship by its identifier |
+| delete_digital_twin_adapter | Deletes a specific digital twin adapter by its identifier |
+| delete_digital_twin_instance | Deletes a specific digital twin instance by its identifier |
+| delete_digital_twin_model | Deletes a specific digital twin model by its identifier |
+| delete_digital_twin_relationship | Deletes a specific digital twin relationship by its identifier |
+| update_digital_twin_adapter | Updates a specific digital twin adapter by its identifier |
+| update_digital_twin_instance | Updates a specific digital twin instance by its identifier |
+| update_digital_twin_model | Updates a specific digital twin model by its identifier |
+| update_digital_twin_relationship | Updates a specific digital twin relationship by its identifier |
+| create_iot_domain | Creates a new IoT domain in a specified IoT domain group |
+| create_iot_domain_group | Creates a new IoT domain group in a specified compartment |
+| change_iot_domain_compartment | Moves a specific IoT domain to a different compartment |
+| change_iot_domain_data_retention_period | Changes the data retention period configuration for a specific IoT domain |
+| change_iot_domain_group_compartment | Moves a specific IoT domain group to a different compartment |
+| configure_iot_domain_data_access | Configures data access for a specific IoT domain |
+| configure_iot_domain_group_data_access | Configures data access for a specific IoT domain group |
+| update_iot_domain | Updates a specific IoT domain by its identifier |
+| update_iot_domain_group | Updates a specific IoT domain group by its identifier |
+| delete_iot_domain | Deletes a specific IoT domain by its identifier |
+| delete_iot_domain_group | Deletes a specific IoT domain group by its identifier |
+| invoke_raw_command | Invokes a raw command on a specific digital twin instance |
 | get_iot_domain | Retrieves a specific IoT domain by its identifier |
 | get_iot_domain_group | Retrieves a specific IoT domain group by its identifier |
 | get_work_request | Retrieves a specific work request by its identifier |
@@ -36,6 +56,8 @@ uv run oracle.oci-iot-mcp-server
 | list_work_request_errors | Lists errors for a specific work request |
 | list_work_request_logs | Lists logs for a specific work request |
 | list_work_requests | Lists work requests in a specified compartment |
+| list_compartments | Lists all OCI compartments that the current user has access to |
+| health_check | Health check endpoint for the OCI IoT MCP server |
 
 ## Configuration
 
