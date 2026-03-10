@@ -8,6 +8,9 @@ import json
 import os
 import logging
 from typing import Annotated, Any, Optional
+from urllib.error import HTTPError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 import oci
 from fastmcp import FastMCP
@@ -58,6 +61,11 @@ def _response_to_dict(response):
         "headers": headers,
         "data": getattr(response, "data", None),
     }
+
+
+def _result_payload(value):
+    """Wrap list-style tool results in a structured payload expected by tests/clients."""
+    return {"result": value}
 
 def get_iot_client( profile_name: Annotated[Optional[str], "Stored/Authenticated OCI Profile"] = None):
     """
@@ -153,6 +161,106 @@ def get_identity_client(profile_name: Annotated[Optional[str], "Stored/Authentic
         logger.error(f"Error creating Identity client: {e}")
         raise
 
+def _get_oci_config(profile_name: Optional[str] = None):
+    """Load OCI configuration for the selected profile."""
+    if profile_name is None:
+        profile_name = os.getenv("OCI_CONFIG_PROFILE", "DEFAULT")
+    return oci.config.from_file(profile_name=profile_name)
+
+
+def _get_iot_data_api_access_token(access_token: Optional[str] = None):
+    """Resolve the IoT Data API access token from an argument or environment variable."""
+    token = access_token or os.getenv("OCI_IOT_DATA_API_ACCESS_TOKEN")
+    if not token:
+        raise ValueError(
+            "IoT Data API access token is required. Pass access_token or set OCI_IOT_DATA_API_ACCESS_TOKEN."
+        )
+    return token
+
+
+def _normalize_query_params(query_params: Optional[dict[str, Any] | str]):
+    """Normalize query parameters for Data API requests."""
+    params = _parse_json_input(query_params, "query_params")
+    if params is None:
+        return {}
+    if not isinstance(params, dict):
+        raise ValueError("query_params must be a dictionary or JSON object string")
+
+    normalized = {}
+    for key, value in params.items():
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            normalized[key] = str(value).lower()
+        elif isinstance(value, (dict, list)):
+            normalized[key] = json.dumps(value)
+        else:
+            normalized[key] = value
+    return normalized
+
+
+def _build_iot_data_api_url(
+    iot_domain_group_short_id: str,
+    iot_domain_short_id: str,
+    resource_path: str,
+    region: Optional[str] = None,
+):
+    """Build an Oracle IoT Data API URL."""
+    if region is None:
+        config = _get_oci_config()
+        region = config.get("region")
+
+    base_url = (
+        f"https://{iot_domain_group_short_id}.data.iot.{region}.oci.oraclecloud.com"
+        f"/ords/{iot_domain_short_id}"
+    )
+    return f"{base_url}{resource_path}"
+
+
+def _call_iot_data_api(
+    resource_path: str,
+    iot_domain_group_short_id: str,
+    iot_domain_short_id: str,
+    query_params: Optional[dict[str, Any] | str] = None,
+    region: Optional[str] = None,
+    access_token: Optional[str] = None,
+    opc_request_id: Optional[str] = None,
+):
+    """Call the Oracle IoT Data API using a bearer token."""
+    token = _get_iot_data_api_access_token(access_token)
+    url = _build_iot_data_api_url(
+        iot_domain_group_short_id=iot_domain_group_short_id,
+        iot_domain_short_id=iot_domain_short_id,
+        resource_path=resource_path,
+        region=region,
+    )
+
+    normalized_query_params = _normalize_query_params(query_params)
+    if normalized_query_params:
+        url = f"{url}?{urlencode(normalized_query_params, doseq=True)}"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    }
+    if opc_request_id is not None:
+        headers["opc-request-id"] = opc_request_id
+
+    request = Request(url, headers=headers, method="GET")
+
+    try:
+        with urlopen(request) as response:
+            payload = response.read().decode("utf-8")
+            content_type = response.headers.get("Content-Type", "")
+            if "application/json" in content_type:
+                return json.loads(payload)
+            return payload
+    except HTTPError as e:
+        error_body = e.read().decode("utf-8", errors="replace")
+        logger.error(f"IoT Data API request failed for {url}: {e.code} {error_body}")
+        raise RuntimeError(f"IoT Data API request failed with status {e.code}: {error_body}") from e
+
+
 @mcp.tool(
     description="Retrieves a specific digital twin adapter by its identifier."
 )
@@ -170,7 +278,7 @@ def get_digital_twin_adapter(
         digital_twin_adapter = iot_client.get_digital_twin_adapter(digital_twin_adapter_id=digital_twin_adapter_id)
         # Convert to pydantic model for validation and structured output
         from .models import DigitalTwinAdapterModel
-        return DigitalTwinAdapterModel.model_validate(digital_twin_adapter.data).model_dump()
+        return DigitalTwinAdapterModel.from_oci_model(digital_twin_adapter.data).model_dump()
     except Exception as e:
         logger.error(f"Error getting digital twin adapter {digital_twin_adapter_id}: {e}")
         raise
@@ -192,7 +300,7 @@ def get_digital_twin_instance(
         digital_twin_instance = iot_client.get_digital_twin_instance(digital_twin_instance_id=digital_twin_instance_id)#, **kwargs)
         # Convert to pydantic model for validation and structured output
         from .models import DigitalTwinInstanceModel
-        return DigitalTwinInstanceModel.model_validate(digital_twin_instance.data).model_dump()
+        return DigitalTwinInstanceModel.from_oci_model(digital_twin_instance.data).model_dump()
     except Exception as e:
         logger.error(f"Error getting digital twin instance {digital_twin_instance_id}: {e}")
         raise
@@ -463,7 +571,7 @@ def get_digital_twin_relationship(
         digital_twin_relationship = iot_client.get_digital_twin_relationship(digital_twin_relationship_id=digital_twin_relationship_id)#, **kwargs)
         # Convert to pydantic model for validation and structured output
         from .models import DigitalTwinRelationshipModel
-        return DigitalTwinRelationshipModel.model_validate(digital_twin_relationship.data).model_dump()
+        return DigitalTwinRelationshipModel.from_oci_model(digital_twin_relationship.data).model_dump()
     except Exception as e:
         logger.error(f"Error getting digital twin relationship {digital_twin_relationship_id}: {e}")
         raise
@@ -1251,7 +1359,7 @@ def get_iot_domain(
         iot_domain = iot_client.get_iot_domain(iot_domain_id=iot_domain_id)#, **kwargs)
         # Convert to pydantic model for validation and structured output
         from .models import IoTDomainModel
-        return IoTDomainModel.model_validate(iot_domain.data).model_dump()
+        return IoTDomainModel.from_oci_model(iot_domain.data).model_dump()
     except Exception as e:
         logger.error(f"Error getting IoT domain {iot_domain_id}: {e}")
         raise
@@ -1269,7 +1377,7 @@ def get_iot_domain_group(
         iot_domain_group = iot_client.get_iot_domain_group(iot_domain_group_id=iot_domain_group_id)#, **kwargs)
         # Convert to pydantic model for validation and structured output
         from .models import IoTDomainGroupModel
-        return IoTDomainGroupModel.model_validate(iot_domain_group.data).model_dump()
+        return IoTDomainGroupModel.from_oci_model(iot_domain_group.data).model_dump()
     except Exception as e:
         logger.error(f"Error getting IoT domain group {iot_domain_group_id}: {e}")
         raise
@@ -1287,7 +1395,7 @@ def get_work_request(
         work_request = iot_client.get_work_request(work_request_id=work_request_id)#, **kwargs)
         # Convert to pydantic model for validation and structured output
         from .models import WorkRequestModel
-        return WorkRequestModel.model_validate(work_request.data).model_dump()
+        return WorkRequestModel.from_oci_model(work_request.data).model_dump()
     except Exception as e:
         logger.error(f"Error getting work request {work_request_id}: {e}")
         raise
@@ -1313,7 +1421,7 @@ def list_digital_twin_adapters(
         # Convert OCI SDK summary objects to pydantic models with explicit field mapping
         from .models import DigitalTwinAdapterModel
         adapters = _normalize_items(digital_twin_adapters.data)
-        return [DigitalTwinAdapterModel.from_oci_model(adapter).model_dump() for adapter in adapters]
+        return _result_payload([DigitalTwinAdapterModel.from_oci_model(adapter).model_dump() for adapter in adapters])
     except Exception as e:
         logger.error(f"Error listing digital twin adapters for domain {iot_domain_id}: {e}")
         raise
@@ -1339,7 +1447,7 @@ def list_digital_twin_models(
         # Convert OCI SDK summary objects to pydantic models with explicit field mapping
         from .models import DigitalTwinModelSummaryModel
         models = _normalize_items(digital_twin_models.data)
-        return [DigitalTwinModelSummaryModel.from_oci_model(model).model_dump() for model in models]
+        return _result_payload([DigitalTwinModelSummaryModel.from_oci_model(model).model_dump() for model in models])
     except Exception as e:
         logger.error(f"Error listing digital twin models for domain {iot_domain_id}: {e}")
         raise
@@ -1366,7 +1474,7 @@ def list_digital_twin_instances(
         # Convert OCI SDK summary objects to pydantic models with explicit field mapping
         from .models import DigitalTwinInstanceModel
         instances = _normalize_items(digital_twin_instances.data)
-        return [DigitalTwinInstanceModel.from_oci_model(instance).model_dump() for instance in instances]
+        return _result_payload([DigitalTwinInstanceModel.from_oci_model(instance).model_dump() for instance in instances])
     except Exception as e:
         logger.error(f"Error listing digital twin instances for domain {iot_domain_id}: {e}")
         raise
@@ -1392,7 +1500,7 @@ def list_digital_twin_relationships(
         # Convert OCI SDK summary objects to pydantic models with explicit field mapping
         from .models import DigitalTwinRelationshipModel
         relationships = _normalize_items(digital_twin_relationships.data)
-        return [DigitalTwinRelationshipModel.from_oci_model(relationship).model_dump() for relationship in relationships]
+        return _result_payload([DigitalTwinRelationshipModel.from_oci_model(relationship).model_dump() for relationship in relationships])
     except Exception as e:
         logger.error(f"Error listing digital twin relationships for domain {iot_domain_id}: {e}")
         raise
@@ -1418,7 +1526,7 @@ def list_iot_domain_groups(
         # Convert OCI SDK summary objects to pydantic models with explicit field mapping
         from .models import IoTDomainGroupModel
         groups = _normalize_items(domain_groups.data)
-        return [IoTDomainGroupModel.from_oci_model(domain_group).model_dump() for domain_group in groups]
+        return _result_payload([IoTDomainGroupModel.from_oci_model(domain_group).model_dump() for domain_group in groups])
     except Exception as e:
         logger.error(f"Error listing IoT domain groups for compartment {compartment_id}: {e}")
         raise
@@ -1444,7 +1552,7 @@ def list_iot_domains(
         # Convert OCI SDK summary objects to pydantic models with explicit field mapping
         from .models import IoTDomainModel
         domains_list = _normalize_items(domains.data)
-        return [IoTDomainModel.from_oci_model(domain).model_dump() for domain in domains_list]
+        return _result_payload([IoTDomainModel.from_oci_model(domain).model_dump() for domain in domains_list])
     except Exception as e:
         logger.error(f"Error listing IoT domains for compartment {compartment_id}: {e}")
         raise
@@ -1470,7 +1578,8 @@ def list_work_request_errors(
         # Convert OCI SDK error objects to pydantic models with explicit field mapping
         from .models import ErrorModel
         errors = _normalize_items(work_request_errors.data)
-        return [ErrorModel.from_oci_model(error).model_dump() for error in errors]
+        result = [error if isinstance(error, str) else ErrorModel.from_oci_model(error).model_dump() for error in errors]
+        return _result_payload(result)
     except Exception as e:
         logger.error(f"Error listing work request errors for {work_request_id}: {e}")
         raise
@@ -1496,7 +1605,8 @@ def list_work_request_logs(
         # Convert OCI SDK log objects to pydantic models with explicit field mapping
         from .models import LogModel
         logs = _normalize_items(work_request_logs.data)
-        return [LogModel.from_oci_model(log).model_dump() for log in logs]
+        result = [log if isinstance(log, str) else LogModel.from_oci_model(log).model_dump() for log in logs]
+        return _result_payload(result)
     except Exception as e:
         logger.error(f"Error listing work request logs for {work_request_id}: {e}")
         raise
@@ -1522,7 +1632,7 @@ def list_work_requests(
         # Convert OCI SDK work request objects to pydantic models with explicit field mapping
         from .models import WorkRequestModel
         requests_list = _normalize_items(work_requests.data)
-        return [WorkRequestModel.from_oci_model(work_request).model_dump() for work_request in requests_list]
+        return _result_payload([WorkRequestModel.from_oci_model(work_request).model_dump() for work_request in requests_list])
     except Exception as e:
         logger.error(f"Error listing work requests for compartment {compartment_id}: {e}")
         raise
@@ -1562,10 +1672,213 @@ def list_compartments(
             if compartment_id:
                 deduped[compartment_id] = compartment
 
-        return [CompartmentModel.from_oci_model(compartment).model_dump() for compartment in deduped.values()]
+        return _result_payload([CompartmentModel.from_oci_model(compartment).model_dump() for compartment in deduped.values()])
     except Exception as e:
         logger.error(f"Error listing compartments: {e}")
         raise
+
+@mcp.tool(
+    description="Lists raw data records from the Oracle IoT Data API for a specific IoT domain."
+)
+def list_raw_data(
+    iot_domain_group_short_id: Annotated[str, "The IoT domain group short identifier used by the Data API host"],
+    iot_domain_short_id: Annotated[str, "The IoT domain short identifier used by the Data API path"],
+    query_params: Annotated[Optional[dict[str, Any] | str], "Optional Data API query parameters as an object or JSON string"] = None,
+    region: Annotated[Optional[str], "OCI region for the IoT Data API endpoint; defaults to the configured OCI profile region"] = None,
+    access_token: Annotated[Optional[str], "Bearer token for the IoT Data API; defaults to OCI_IOT_DATA_API_ACCESS_TOKEN if omitted"] = None,
+    opc_request_id: Annotated[Optional[str], "A unique Oracle-assigned identifier for the request"] = None,
+):
+    """List raw data records from the Oracle IoT Data API."""
+    return _call_iot_data_api(
+        resource_path="/rawData",
+        iot_domain_group_short_id=iot_domain_group_short_id,
+        iot_domain_short_id=iot_domain_short_id,
+        query_params=query_params,
+        region=region,
+        access_token=access_token,
+        opc_request_id=opc_request_id,
+    )
+
+
+@mcp.tool(
+    description="Gets a raw data record by identifier from the Oracle IoT Data API for a specific IoT domain."
+)
+def get_raw_data(
+    iot_domain_group_short_id: Annotated[str, "The IoT domain group short identifier used by the Data API host"],
+    iot_domain_short_id: Annotated[str, "The IoT domain short identifier used by the Data API path"],
+    record_id: Annotated[str, "The raw data record identifier"],
+    region: Annotated[Optional[str], "OCI region for the IoT Data API endpoint; defaults to the configured OCI profile region"] = None,
+    access_token: Annotated[Optional[str], "Bearer token for the IoT Data API; defaults to OCI_IOT_DATA_API_ACCESS_TOKEN if omitted"] = None,
+    opc_request_id: Annotated[Optional[str], "A unique Oracle-assigned identifier for the request"] = None,
+):
+    """Get a raw data record by ID from the Oracle IoT Data API."""
+    return _call_iot_data_api(
+        resource_path=f"/rawData/{record_id}",
+        iot_domain_group_short_id=iot_domain_group_short_id,
+        iot_domain_short_id=iot_domain_short_id,
+        region=region,
+        access_token=access_token,
+        opc_request_id=opc_request_id,
+    )
+
+
+@mcp.tool(
+    description="Lists rejected data records from the Oracle IoT Data API for a specific IoT domain."
+)
+def list_rejected_data(
+    iot_domain_group_short_id: Annotated[str, "The IoT domain group short identifier used by the Data API host"],
+    iot_domain_short_id: Annotated[str, "The IoT domain short identifier used by the Data API path"],
+    query_params: Annotated[Optional[dict[str, Any] | str], "Optional Data API query parameters as an object or JSON string"] = None,
+    region: Annotated[Optional[str], "OCI region for the IoT Data API endpoint; defaults to the configured OCI profile region"] = None,
+    access_token: Annotated[Optional[str], "Bearer token for the IoT Data API; defaults to OCI_IOT_DATA_API_ACCESS_TOKEN if omitted"] = None,
+    opc_request_id: Annotated[Optional[str], "A unique Oracle-assigned identifier for the request"] = None,
+):
+    """List rejected data records from the Oracle IoT Data API."""
+    return _call_iot_data_api(
+        resource_path="/rejectedData",
+        iot_domain_group_short_id=iot_domain_group_short_id,
+        iot_domain_short_id=iot_domain_short_id,
+        query_params=query_params,
+        region=region,
+        access_token=access_token,
+        opc_request_id=opc_request_id,
+    )
+
+
+@mcp.tool(
+    description="Gets a rejected data record by identifier from the Oracle IoT Data API for a specific IoT domain."
+)
+def get_rejected_data(
+    iot_domain_group_short_id: Annotated[str, "The IoT domain group short identifier used by the Data API host"],
+    iot_domain_short_id: Annotated[str, "The IoT domain short identifier used by the Data API path"],
+    record_id: Annotated[str, "The rejected data record identifier"],
+    region: Annotated[Optional[str], "OCI region for the IoT Data API endpoint; defaults to the configured OCI profile region"] = None,
+    access_token: Annotated[Optional[str], "Bearer token for the IoT Data API; defaults to OCI_IOT_DATA_API_ACCESS_TOKEN if omitted"] = None,
+    opc_request_id: Annotated[Optional[str], "A unique Oracle-assigned identifier for the request"] = None,
+):
+    """Get a rejected data record by ID from the Oracle IoT Data API."""
+    return _call_iot_data_api(
+        resource_path=f"/rejectedData/{record_id}",
+        iot_domain_group_short_id=iot_domain_group_short_id,
+        iot_domain_short_id=iot_domain_short_id,
+        region=region,
+        access_token=access_token,
+        opc_request_id=opc_request_id,
+    )
+
+
+@mcp.tool(
+    description="Lists snapshot data records from the Oracle IoT Data API for a specific IoT domain."
+)
+def list_snapshot_data(
+    iot_domain_group_short_id: Annotated[str, "The IoT domain group short identifier used by the Data API host"],
+    iot_domain_short_id: Annotated[str, "The IoT domain short identifier used by the Data API path"],
+    query_params: Annotated[Optional[dict[str, Any] | str], "Optional Data API query parameters as an object or JSON string"] = None,
+    region: Annotated[Optional[str], "OCI region for the IoT Data API endpoint; defaults to the configured OCI profile region"] = None,
+    access_token: Annotated[Optional[str], "Bearer token for the IoT Data API; defaults to OCI_IOT_DATA_API_ACCESS_TOKEN if omitted"] = None,
+    opc_request_id: Annotated[Optional[str], "A unique Oracle-assigned identifier for the request"] = None,
+):
+    """List snapshot data records from the Oracle IoT Data API."""
+    return _call_iot_data_api(
+        resource_path="/snapshotData",
+        iot_domain_group_short_id=iot_domain_group_short_id,
+        iot_domain_short_id=iot_domain_short_id,
+        query_params=query_params,
+        region=region,
+        access_token=access_token,
+        opc_request_id=opc_request_id,
+    )
+
+
+@mcp.tool(
+    description="Lists historized data records from the Oracle IoT Data API for a specific IoT domain."
+)
+def list_historized_data(
+    iot_domain_group_short_id: Annotated[str, "The IoT domain group short identifier used by the Data API host"],
+    iot_domain_short_id: Annotated[str, "The IoT domain short identifier used by the Data API path"],
+    query_params: Annotated[Optional[dict[str, Any] | str], "Optional Data API query parameters as an object or JSON string"] = None,
+    region: Annotated[Optional[str], "OCI region for the IoT Data API endpoint; defaults to the configured OCI profile region"] = None,
+    access_token: Annotated[Optional[str], "Bearer token for the IoT Data API; defaults to OCI_IOT_DATA_API_ACCESS_TOKEN if omitted"] = None,
+    opc_request_id: Annotated[Optional[str], "A unique Oracle-assigned identifier for the request"] = None,
+):
+    """List historized data records from the Oracle IoT Data API."""
+    return _call_iot_data_api(
+        resource_path="/historizedData",
+        iot_domain_group_short_id=iot_domain_group_short_id,
+        iot_domain_short_id=iot_domain_short_id,
+        query_params=query_params,
+        region=region,
+        access_token=access_token,
+        opc_request_id=opc_request_id,
+    )
+
+
+@mcp.tool(
+    description="Gets a historized data record by identifier from the Oracle IoT Data API for a specific IoT domain."
+)
+def get_historized_data(
+    iot_domain_group_short_id: Annotated[str, "The IoT domain group short identifier used by the Data API host"],
+    iot_domain_short_id: Annotated[str, "The IoT domain short identifier used by the Data API path"],
+    record_id: Annotated[str, "The historized data record identifier"],
+    region: Annotated[Optional[str], "OCI region for the IoT Data API endpoint; defaults to the configured OCI profile region"] = None,
+    access_token: Annotated[Optional[str], "Bearer token for the IoT Data API; defaults to OCI_IOT_DATA_API_ACCESS_TOKEN if omitted"] = None,
+    opc_request_id: Annotated[Optional[str], "A unique Oracle-assigned identifier for the request"] = None,
+):
+    """Get a historized data record by ID from the Oracle IoT Data API."""
+    return _call_iot_data_api(
+        resource_path=f"/historizedData/{record_id}",
+        iot_domain_group_short_id=iot_domain_group_short_id,
+        iot_domain_short_id=iot_domain_short_id,
+        region=region,
+        access_token=access_token,
+        opc_request_id=opc_request_id,
+    )
+
+
+@mcp.tool(
+    description="Lists raw command data records from the Oracle IoT Data API for a specific IoT domain."
+)
+def list_raw_command_data(
+    iot_domain_group_short_id: Annotated[str, "The IoT domain group short identifier used by the Data API host"],
+    iot_domain_short_id: Annotated[str, "The IoT domain short identifier used by the Data API path"],
+    query_params: Annotated[Optional[dict[str, Any] | str], "Optional Data API query parameters as an object or JSON string"] = None,
+    region: Annotated[Optional[str], "OCI region for the IoT Data API endpoint; defaults to the configured OCI profile region"] = None,
+    access_token: Annotated[Optional[str], "Bearer token for the IoT Data API; defaults to OCI_IOT_DATA_API_ACCESS_TOKEN if omitted"] = None,
+    opc_request_id: Annotated[Optional[str], "A unique Oracle-assigned identifier for the request"] = None,
+):
+    """List raw command data records from the Oracle IoT Data API."""
+    return _call_iot_data_api(
+        resource_path="/rawCommandData",
+        iot_domain_group_short_id=iot_domain_group_short_id,
+        iot_domain_short_id=iot_domain_short_id,
+        query_params=query_params,
+        region=region,
+        access_token=access_token,
+        opc_request_id=opc_request_id,
+    )
+
+
+@mcp.tool(
+    description="Gets a raw command data record by identifier from the Oracle IoT Data API for a specific IoT domain."
+)
+def get_raw_command_data(
+    iot_domain_group_short_id: Annotated[str, "The IoT domain group short identifier used by the Data API host"],
+    iot_domain_short_id: Annotated[str, "The IoT domain short identifier used by the Data API path"],
+    record_id: Annotated[str, "The raw command data record identifier"],
+    region: Annotated[Optional[str], "OCI region for the IoT Data API endpoint; defaults to the configured OCI profile region"] = None,
+    access_token: Annotated[Optional[str], "Bearer token for the IoT Data API; defaults to OCI_IOT_DATA_API_ACCESS_TOKEN if omitted"] = None,
+    opc_request_id: Annotated[Optional[str], "A unique Oracle-assigned identifier for the request"] = None,
+):
+    """Get a raw command data record by ID from the Oracle IoT Data API."""
+    return _call_iot_data_api(
+        resource_path=f"/rawCommandData/{record_id}",
+        iot_domain_group_short_id=iot_domain_group_short_id,
+        iot_domain_short_id=iot_domain_short_id,
+        region=region,
+        access_token=access_token,
+        opc_request_id=opc_request_id,
+    )
+
 
 @mcp.tool(
     description="Health check endpoint for the OCI IoT MCP server."

@@ -2,7 +2,11 @@
 
 ## Overview
 
-This server provides MCP tools for interacting with the Oracle Cloud Infrastructure (OCI) IoT service.
+This server provides MCP tools for interacting with the Oracle Cloud Infrastructure (OCI) IoT Platform service.
+It includes both:
+
+- OCI IoT management tools backed by the Python SDK
+- OCI IoT Data API tools backed by the OCI Internet of Things Platform Data API
 
 ## Running the server
 
@@ -16,7 +20,7 @@ uv run oracle.oci-iot-mcp-server
 | --- | --- |
 | get_digital_twin_adapter | Retrieves a specific digital twin adapter by its identifier |
 | get_digital_twin_instance | Retrieves a specific digital twin instance by its identifier |
-| get_digital_twin_instance_content | Retrieves the content of a specific digital twin instance by its identifier; set `should_include_metadata` to `true` to include metadata in the response |
+| get_digital_twin_instance_content | Retrieves the content of a specific digital twin instance by its identifier |
 | get_digital_twin_model | Retrieves a specific digital twin model by its identifier |
 | get_digital_twin_model_spec | Retrieves the specification of a specific digital twin model by its identifier |
 | create_digital_twin_model | Creates a new digital twin model in a specified IoT domain |
@@ -57,15 +61,87 @@ uv run oracle.oci-iot-mcp-server
 | list_work_request_logs | Lists logs for a specific work request |
 | list_work_requests | Lists work requests in a specified compartment |
 | list_compartments | Lists all OCI compartments that the current user has access to |
+| list_raw_data | Lists raw data records from the Oracle IoT Data API for a specific IoT domain |
+| get_raw_data | Gets a raw data record by identifier from the Oracle IoT Data API for a specific IoT domain |
+| list_rejected_data | Lists rejected data records from the Oracle IoT Data API for a specific IoT domain |
+| get_rejected_data | Gets a rejected data record by identifier from the Oracle IoT Data API for a specific IoT domain |
+| list_snapshot_data | Lists snapshot data records from the Oracle IoT Data API for a specific IoT domain |
+| list_historized_data | Lists historized data records from the Oracle IoT Data API for a specific IoT domain |
+| get_historized_data | Gets a historized data record by identifier from the Oracle IoT Data API for a specific IoT domain |
+| list_raw_command_data | Lists raw command data records from the Oracle IoT Data API for a specific IoT domain |
+| get_raw_command_data | Gets a raw command data record by identifier from the Oracle IoT Data API for a specific IoT domain |
 | health_check | Health check endpoint for the OCI IoT MCP server |
 
 ## Configuration
 
-The server uses the OCI configuration profile specified by the `OCI_CONFIG_PROFILE` environment variable. If not set, it defaults to "DEFAULT".
+The server uses the OCI configuration profile specified by the `OCI_CONFIG_PROFILE` environment variable. If not set, it defaults to `DEFAULT`.
+
+For OCI IoT Data API tools, you can also provide a bearer token through the `OCI_IOT_DATA_API_ACCESS_TOKEN` environment variable.
+
+## Usage Notes
+
+- `get_digital_twin_instance_content` supports `should_include_metadata=true` to include digital twin instance metadata in the response payload.
+- List-style SDK tools return a structured payload with a `result` field containing the list of items.
+- String-returning tools such as `get_digital_twin_instance_content` and `get_digital_twin_model_spec` return plain text content.
+
+## IoT Data API Notes
+
+- These tools target the **OCI Internet of Things Platform Data API**, not the older Oracle Internet of Things Cloud Service product.
+- The Oracle IoT Data API tools require `iot_domain_group_short_id` and `iot_domain_short_id`.
+- The Data API also requires a bearer token. Pass it with the `access_token` parameter or set `OCI_IOT_DATA_API_ACCESS_TOKEN`.
+- If `region` is omitted, the tools default to the region in the configured OCI profile.
+- List-style Data API tools accept optional `query_params` as an object or JSON string and pass them through to the API query string.
+- The Data API base URL format is:
+
+```text
+https://{iot_domain_group_short_id}.data.iot.{region}.oci.oraclecloud.com/ords/{iot_domain_short_id}
+```
+
+## Examples
+
+Get digital twin instance content with metadata:
+
+```json
+{
+  "tool": "get_digital_twin_instance_content",
+  "arguments": {
+    "digital_twin_instance_id": "ocid1.digitaltwininstance.oc1..example",
+    "should_include_metadata": true
+  }
+}
+```
+
+List raw data from the OCI IoT Data API:
+
+```json
+{
+  "tool": "list_raw_data",
+  "arguments": {
+    "iot_domain_group_short_id": "exampleDomainGroupShortId",
+    "iot_domain_short_id": "exampleDomainShortId",
+    "query_params": {
+      "limit": 50
+    }
+  }
+}
+```
+
+Get a single raw data record from the OCI IoT Data API:
+
+```json
+{
+  "tool": "get_raw_data",
+  "arguments": {
+    "iot_domain_group_short_id": "exampleDomainGroupShortId",
+    "iot_domain_short_id": "exampleDomainShortId",
+    "record_id": "exampleRecordId"
+  }
+}
+```
 
 ## Security
 
-⚠️ **NOTE**: All actions are performed with the permissions of the configured OCI CLI profile. We advise least-privilege IAM setup, secure credential management, safe network practices, secure logging, and warn against exposing secrets.
+⚠️ **NOTE**: All actions are performed with the permissions of the configured OCI CLI profile or Data API bearer token. We advise least-privilege IAM setup, secure credential management, safe network practices, secure logging, and warn against exposing secrets.
 
 ## Third-Party APIs
 
