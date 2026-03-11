@@ -398,7 +398,7 @@ def create_digital_twin_model(
             iot_domain_id=iot_domain_id,
             display_name=display_name,
             description=description,
-            specification=specification,
+            spec=specification,
         )
 
         kwargs = {
