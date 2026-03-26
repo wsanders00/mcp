@@ -13,6 +13,7 @@ dependencies = [
     "fastmcp==2.12.2",
     "oci>=2.165.1",
     "pydantic>=2.5.0",
+    "httpx>=0.28.1",
 ]
 
 classifiers = [
@@ -36,4 +37,12 @@ packages = ["oracle"]
 dev = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
+    "pytest-cov>=7.0.0",
 ]
+
+[tool.coverage.run]
+omit = ["**/__init__.py", "**/tests/*", "dist/*", ".venv/*"]
+
+[tool.coverage.report]
+precision = 2
+fail_under = 90

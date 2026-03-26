@@ -4,18 +4,14 @@ Licensed under the Universal Permissive License v1.0 as shown at
 https://oss.oracle.com/licenses/upl.
 """
 
-import os
 import logging
-from logging import Logger
-from typing import Annotated, Optional
-from functools import lru_cache
+from typing import Annotated
 
-import oci
 from fastmcp import FastMCP
 from oci.iot.models import IotDomainGroupCollection, IotDomainGroupSummary, IotDomainSummary, DigitalTwinModelSummary, DigitalTwinAdapterSummary, DigitalTwinInstanceSummary, DigitalTwinRelationshipSummary
-from oci.exceptions import ServiceError, ConfigFileNotFound, InvalidConfig
 
 from . import __project__, __version__
+from .client import get_iot_client
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -23,9 +19,6 @@ logger.setLevel(logging.INFO)
 
 # Create FastMCP instance
 mcp = FastMCP(name=__project__)
-
-# Global client cache
-_iot_client = None
 
 def _normalize_items(data):
     """Normalize OCI list response data into a list of items."""
@@ -36,56 +29,6 @@ def _normalize_items(data):
     if data is None:
         return []
     return [data]
-
-def get_iot_client( profile_name: Annotated[Optional[str], "Stored/Authenticated OCI Profile"] = None):
-    """
-    Get or create IoT client with caching.
-    
-    Args:
-        profile_name: OCI configuration profile name. If None, uses environment variable or default.
-        
-    Returns:
-        IotClient instance
-        
-    Raises:
-        ConfigFileNotFound: If OCI config file is not found
-        InvalidConfig: If OCI configuration is invalid
-        ServiceError: If there's an issue connecting to OCI
-    """
-    global _iot_client
-    
-    # Use environment variable if no profile name provided
-    if profile_name is None:
-        profile_name = os.getenv("OCI_CONFIG_PROFILE", "DEFAULT")
-    
-    # If we already have a client for this profile, return it
-    if _iot_client is not None:
-        return _iot_client
-    
-    try:
-        logger.info(f"Creating IoT client for profile: {profile_name}")
-        config = oci.config.from_file(profile_name=profile_name)
-        user_agent_name = __project__.split("oracle.", 1)[1].split("-server", 1)[0]
-        config["additional_user_agent"] = f"{user_agent_name}/{__version__}"
-
-        private_key = oci.signer.load_private_key_from_file(config["key_file"])
-        token_file = config["security_token_file"]
-        token = None
-        with open(token_file, "r") as f:
-            token = f.read()
-        signer = oci.auth.signers.SecurityTokenSigner(token, private_key)
-        _iot_client = oci.iot.IotClient(config, signer=signer)
-        logger.info("IoT client created successfully")
-        return _iot_client
-    except ConfigFileNotFound as e:
-        logger.error(f"OCI config file not found: {e}")
-        raise
-    except InvalidConfig as e:
-        logger.error(f"Invalid OCI configuration: {e}")
-        raise
-    except Exception as e:
-        logger.error(f"Error creating IoT client: {e}")
-        raise
 
 @mcp.tool(
     description="Retrieves a specific digital twin adapter by its identifier."
