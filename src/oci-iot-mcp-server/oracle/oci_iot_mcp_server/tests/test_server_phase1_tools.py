@@ -707,4 +707,7 @@ def test_legacy_control_plane_tools_delegate_to_record_helpers(
 
     result = getattr(server, tool_name)(*args, **kwargs)
 
-    assert result == expected
+    if tool_name.startswith("list_"):
+        assert result == {"result": expected}
+    else:
+        assert result == expected
