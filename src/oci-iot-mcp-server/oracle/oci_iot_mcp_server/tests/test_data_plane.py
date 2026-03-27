@@ -260,6 +260,12 @@ def test_collection_wrappers_use_expected_paths_and_filters(monkeypatch):
         digital_twin_instance_id="twin-1",
         target_count=5,
     )
+    historized = data_plane.list_historized_records(
+        base_url="https://example.com/base",
+        token="token-123",
+        digital_twin_instance_id="twin-1",
+        target_count=5,
+    )
     rejected = data_plane.list_rejected_data_records(
         base_url="https://example.com/base",
         token="token-123",
@@ -276,10 +282,12 @@ def test_collection_wrappers_use_expected_paths_and_filters(monkeypatch):
     }
     assert raw == [{"id": "/rawCommandData"}]
     assert snapshot == [{"id": "/snapshotData"}]
+    assert historized == [{"id": "/historizedData"}]
     assert rejected == [{"id": "/rejectedData"}]
     assert [entry["path"] for entry in observed_list] == [
         "/rawCommandData",
         "/snapshotData",
+        "/historizedData",
         "/rejectedData",
     ]
     assert all(entry["params"]["q"] == encode_q(build_twin_filter("twin-1")) for entry in observed_list)

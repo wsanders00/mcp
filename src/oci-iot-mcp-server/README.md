@@ -76,6 +76,9 @@ uv run oracle.oci-iot-mcp-server
 | get_historized_data | Gets a historized data record by identifier from the Oracle IoT Data API for a specific IoT domain |
 | list_raw_command_data | Lists raw command data records from the Oracle IoT Data API for a specific IoT domain |
 | get_raw_command_data | Gets a raw command data record by identifier from the Oracle IoT Data API for a specific IoT domain |
+| get_twin_platform_context | Returns the control-plane and domain-context resources that explain how a twin is wired into OCI IoT |
+| get_latest_twin_state | Returns the latest observed snapshot, historized, raw-command, and rejected-data records for a twin |
+| validate_twin_readiness | Passively validates whether a twin is reporting snapshot data |
 | list_recent_raw_commands_for_twin | Lists recent raw command records for a digital twin instance |
 | list_recent_rejected_data_for_twin | Lists recent rejected ingest records for a digital twin instance |
 | wait_for_twin_update | Waits for a twin snapshot update after a given timestamp |
@@ -106,6 +109,18 @@ For ORDS-backed operator tools, set:
 - String-returning tools such as `get_digital_twin_instance_content` and `get_digital_twin_model_spec`
   return plain text content.
 
+## Agent Workflow Guidance
+
+- `get_twin_platform_context` is the best first call when an agent needs to understand how a twin maps to
+  its domain, domain group, adapter, model, and ORDS/Data API context.
+- `get_latest_twin_state` is the best current-state call when an agent needs the newest observed
+  snapshot, historized, raw-command, and rejected-data records without manually querying each collection.
+- `validate_twin_readiness` is the passive health check when an agent needs to confirm selector
+  resolution, domain context, ORDS credential presence, token minting, and whether snapshot data is
+  actually arriving.
+- These tools intentionally return structured teaching payloads rather than raw ORDS collection pages so
+  an agent can reason about topology and state with fewer follow-up calls.
+
 ## Friendly Identifier Rules
 
 - `digital_twin_instance_id` and `iot_domain_id` work directly.
@@ -121,7 +136,8 @@ For ORDS-backed operator tools, set:
   caller.
 - Tokens are minted in-memory per call, are not cached across tool invocations, and must never be
   logged.
-- `invoke_raw_command_and_wait`, `get_raw_command_by_request_id`, `list_recent_raw_commands_for_twin`,
+- `get_twin_platform_context`, `get_latest_twin_state`, `validate_twin_readiness`,
+  `invoke_raw_command_and_wait`, `get_raw_command_by_request_id`, `list_recent_raw_commands_for_twin`,
   `list_recent_rejected_data_for_twin`, and `wait_for_twin_update` resolve ORDS access automatically
   from the provided domain and twin selectors.
 
@@ -161,6 +177,41 @@ Resolve a domain context and mint a Data API token for operator workflows:
 {
   "tool": "get_data_api_token",
   "arguments": {
+    "iot_domain_id": "ocid1.iotdomain.oc1..example"
+  }
+}
+```
+
+Explain how a configured twin is wired into OCI IoT:
+
+```json
+{
+  "tool": "get_twin_platform_context",
+  "arguments": {
+    "digital_twin_instance_name": "pump-17",
+    "iot_domain_id": "ocid1.iotdomain.oc1..example"
+  }
+}
+```
+
+Get the latest observed records for a twin:
+
+```json
+{
+  "tool": "get_latest_twin_state",
+  "arguments": {
+    "digital_twin_instance_id": "ocid1.digitaltwininstance.oc1..example"
+  }
+}
+```
+
+Passively validate whether a twin is reporting snapshot data:
+
+```json
+{
+  "tool": "validate_twin_readiness",
+  "arguments": {
+    "digital_twin_instance_name": "pump-17",
     "iot_domain_id": "ocid1.iotdomain.oc1..example"
   }
 }

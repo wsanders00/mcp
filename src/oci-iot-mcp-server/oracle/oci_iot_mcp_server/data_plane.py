@@ -161,6 +161,22 @@ def list_snapshot_records(
     )
 
 
+def list_historized_records(
+    *,
+    base_url: str,
+    token: str,
+    digital_twin_instance_id: str,
+    target_count: int,
+) -> list[dict]:
+    return list_collection_records(
+        base_url=base_url,
+        path="/historizedData",
+        token=token,
+        params={"q": encode_q(build_twin_filter(digital_twin_instance_id))},
+        target_count=target_count,
+    )
+
+
 def list_rejected_data_records(
     *,
     base_url: str,

@@ -67,9 +67,9 @@ test:
 	$(MAKE) combine-coverage
 
 combine-coverage:
-	uv run coverage combine
-	uv run coverage html
-	uv run coverage report --fail-under=69
+	uv tool run coverage combine
+	uv tool run coverage html
+	uv tool run coverage report --fail-under=69
 
 test-publish:
 	@set -e -o pipefail; \

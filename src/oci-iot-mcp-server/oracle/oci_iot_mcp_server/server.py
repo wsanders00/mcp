@@ -21,6 +21,11 @@ from oci.exceptions import ConfigFileNotFound, InvalidConfig
 from pydantic import TypeAdapter
 
 from . import __project__, __version__
+from .agent_workflows import (
+    get_latest_twin_state_impl,
+    get_twin_platform_context_impl,
+    validate_twin_readiness_impl,
+)
 from .client import get_iot_client
 from .control_plane import (
     get_digital_twin_adapter_record,
@@ -2515,6 +2520,27 @@ def get_digital_twin_adapter_full(
     return _as_tool_result(get_digital_twin_adapter_record(digital_twin_adapter_id))
 
 
+@tool(description="Return the control-plane and domain-context resources that explain how a twin is wired into OCI IoT.")
+def get_twin_platform_context(
+    digital_twin_instance_id: Annotated[str | None, "The digital twin instance OCID"] = None,
+    digital_twin_instance_name: Annotated[str | None, "The digital twin instance display name"] = None,
+    iot_domain_id: Annotated[str | None, "The IoT domain OCID for friendly twin lookup"] = None,
+    iot_domain_display_name: Annotated[str | None, "The IoT domain display name for friendly twin lookup"] = None,
+    domain_short_id: Annotated[str | None, "The IoT domain short ID for friendly twin lookup"] = None,
+    compartment_id: Annotated[str | None, "Compartment OCID for friendly domain lookup"] = None,
+):
+    return _as_tool_result(
+        get_twin_platform_context_impl(
+            digital_twin_instance_id=digital_twin_instance_id,
+            digital_twin_instance_name=digital_twin_instance_name,
+            iot_domain_id=iot_domain_id,
+            iot_domain_display_name=iot_domain_display_name,
+            domain_short_id=domain_short_id,
+            compartment_id=compartment_id,
+        )
+    )
+
+
 @tool(description="Derive normalized IoT domain context for ORDS and operator workflows.")
 def derive_domain_context(
     iot_domain_id: Annotated[str | None, "The IoT domain OCID"] = None,
@@ -2529,6 +2555,48 @@ def derive_domain_context(
         compartment_id=compartment_id,
     )
     return _as_tool_result(context)
+
+
+@tool(description="Return the latest observed snapshot, historized, raw-command, and rejected-data records for a twin.")
+def get_latest_twin_state(
+    digital_twin_instance_id: Annotated[str | None, "The digital twin instance OCID"] = None,
+    digital_twin_instance_name: Annotated[str | None, "The digital twin instance display name"] = None,
+    iot_domain_id: Annotated[str | None, "The IoT domain OCID for friendly twin lookup"] = None,
+    iot_domain_display_name: Annotated[str | None, "The IoT domain display name for friendly twin lookup"] = None,
+    domain_short_id: Annotated[str | None, "The IoT domain short ID for friendly twin lookup"] = None,
+    compartment_id: Annotated[str | None, "Compartment OCID for friendly domain lookup"] = None,
+):
+    return _as_tool_result(
+        get_latest_twin_state_impl(
+            digital_twin_instance_id=digital_twin_instance_id,
+            digital_twin_instance_name=digital_twin_instance_name,
+            iot_domain_id=iot_domain_id,
+            iot_domain_display_name=iot_domain_display_name,
+            domain_short_id=domain_short_id,
+            compartment_id=compartment_id,
+        )
+    )
+
+
+@tool(description="Passively validate whether a twin is reporting snapshot data.")
+def validate_twin_readiness(
+    digital_twin_instance_id: Annotated[str | None, "The digital twin instance OCID"] = None,
+    digital_twin_instance_name: Annotated[str | None, "The digital twin instance display name"] = None,
+    iot_domain_id: Annotated[str | None, "The IoT domain OCID for friendly twin lookup"] = None,
+    iot_domain_display_name: Annotated[str | None, "The IoT domain display name for friendly twin lookup"] = None,
+    domain_short_id: Annotated[str | None, "The IoT domain short ID for friendly twin lookup"] = None,
+    compartment_id: Annotated[str | None, "Compartment OCID for friendly domain lookup"] = None,
+):
+    return _as_tool_result(
+        validate_twin_readiness_impl(
+            digital_twin_instance_id=digital_twin_instance_id,
+            digital_twin_instance_name=digital_twin_instance_name,
+            iot_domain_id=iot_domain_id,
+            iot_domain_display_name=iot_domain_display_name,
+            domain_short_id=domain_short_id,
+            compartment_id=compartment_id,
+        )
+    )
 
 
 @tool(description="Mint and return an IoT Data API bearer token plus the resolved domain context.")
