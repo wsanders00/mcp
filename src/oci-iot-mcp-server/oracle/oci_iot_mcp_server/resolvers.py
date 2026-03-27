@@ -123,3 +123,43 @@ def resolve_twin_selector(
         )
 
     return success_result(matches[0])
+
+
+def resolve_twin_for_tool(
+    *,
+    digital_twin_instance_id: str | None = None,
+    digital_twin_instance_name: str | None = None,
+    iot_domain_id: str | None = None,
+    iot_domain_display_name: str | None = None,
+    domain_short_id: str | None = None,
+    compartment_id: str | None = None,
+) -> dict:
+    if digital_twin_instance_id:
+        result = resolve_twin_selector(digital_twin_instance_id=digital_twin_instance_id)
+        return result["data"] if result["ok"] else result
+
+    if not digital_twin_instance_name:
+        return invalid_input_error(
+            resource_type="digital_twin_instance",
+            message="A digital twin selector is required.",
+            input_payload={
+                "digital_twin_instance_id": digital_twin_instance_id,
+                "digital_twin_instance_name": digital_twin_instance_name,
+            },
+            retry_hint="Retry with digital_twin_instance_id or digital_twin_instance_name.",
+        )
+
+    domain_result = resolve_domain_selector(
+        iot_domain_id=iot_domain_id,
+        iot_domain_display_name=iot_domain_display_name,
+        domain_short_id=domain_short_id,
+        compartment_id=compartment_id,
+    )
+    if not domain_result["ok"]:
+        return domain_result
+
+    result = resolve_twin_selector(
+        digital_twin_instance_name=digital_twin_instance_name,
+        iot_domain_id=domain_result["data"]["id"],
+    )
+    return result["data"] if result["ok"] else result

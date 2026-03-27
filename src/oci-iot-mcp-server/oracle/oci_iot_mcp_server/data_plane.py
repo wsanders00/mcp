@@ -89,6 +89,10 @@ def _get_json(*, url: str, token: str, params: dict) -> dict:
     return response.json()
 
 
+def get_collection_record(*, base_url: str, path: str, token: str, record_id: str) -> dict:
+    return _get_json(url=f"{base_url}{path}/{record_id}", token=token, params={})
+
+
 def list_collection_records(
     *,
     base_url: str,
@@ -114,3 +118,60 @@ def list_collection_records(
         scanned += len(items)
 
     return records[:target_count]
+
+
+def get_raw_command_record(*, base_url: str, token: str, request_id: str) -> dict:
+    return get_collection_record(
+        base_url=base_url,
+        path="/rawCommandData",
+        token=token,
+        record_id=request_id,
+    )
+
+
+def list_raw_command_records(
+    *,
+    base_url: str,
+    token: str,
+    digital_twin_instance_id: str,
+    target_count: int,
+) -> list[dict]:
+    return list_collection_records(
+        base_url=base_url,
+        path="/rawCommandData",
+        token=token,
+        params={"q": encode_q(build_twin_filter(digital_twin_instance_id))},
+        target_count=target_count,
+    )
+
+
+def list_snapshot_records(
+    *,
+    base_url: str,
+    token: str,
+    digital_twin_instance_id: str,
+    target_count: int,
+) -> list[dict]:
+    return list_collection_records(
+        base_url=base_url,
+        path="/snapshotData",
+        token=token,
+        params={"q": encode_q(build_twin_filter(digital_twin_instance_id))},
+        target_count=target_count,
+    )
+
+
+def list_rejected_data_records(
+    *,
+    base_url: str,
+    token: str,
+    digital_twin_instance_id: str,
+    target_count: int,
+) -> list[dict]:
+    return list_collection_records(
+        base_url=base_url,
+        path="/rejectedData",
+        token=token,
+        params={"q": encode_q(build_twin_filter(digital_twin_instance_id))},
+        target_count=target_count,
+    )

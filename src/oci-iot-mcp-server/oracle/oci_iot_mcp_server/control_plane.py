@@ -1,4 +1,11 @@
+import base64
 from typing import Any, Callable
+
+from oci.iot.models import (
+    InvokeRawBinaryCommandDetails,
+    InvokeRawJsonCommandDetails,
+    InvokeRawTextCommandDetails,
+)
 
 from .client import get_iot_client
 from .models import (
@@ -178,3 +185,80 @@ def list_work_request_logs_records(*, work_request_id: str) -> list[dict]:
 
 def list_work_requests_records(*, compartment_id: str) -> list[dict]:
     return _map_many("list_work_requests", map_work_request, compartment_id=compartment_id)
+
+
+def build_invoke_raw_command_details(
+    *,
+    request_endpoint: str,
+    request_data_format: str,
+    request_data: object,
+    response_endpoint: str | None = None,
+    request_duration: str | None = None,
+    response_duration: str | None = None,
+):
+    common = {
+        "request_endpoint": request_endpoint,
+        "response_endpoint": response_endpoint,
+        "request_duration": request_duration,
+        "response_duration": response_duration,
+    }
+    format_name = request_data_format.upper()
+
+    if format_name == "TEXT":
+        if not isinstance(request_data, str):
+            raise ValueError("TEXT request_data must be a string.")
+        return InvokeRawTextCommandDetails(
+            **common,
+            request_data_content_type="text/plain",
+            request_data=request_data,
+        )
+
+    if format_name == "JSON":
+        if not isinstance(request_data, dict):
+            raise ValueError("JSON request_data must be an object.")
+        return InvokeRawJsonCommandDetails(
+            **common,
+            request_data_content_type="application/json",
+            request_data=request_data,
+        )
+
+    if format_name == "BINARY":
+        if not isinstance(request_data, str):
+            raise ValueError("BINARY request_data must be a base64-encoded string.")
+        base64.b64decode(request_data, validate=True)
+        return InvokeRawBinaryCommandDetails(
+            **common,
+            request_data_content_type="application/octet-stream",
+            request_data=request_data,
+        )
+
+    raise ValueError("request_data_format must be one of TEXT, JSON, or BINARY.")
+
+
+def invoke_raw_command(
+    *,
+    digital_twin_instance_id: str,
+    request_endpoint: str,
+    request_data_format: str,
+    request_data: object,
+    response_endpoint: str | None = None,
+    request_duration: str | None = None,
+    response_duration: str | None = None,
+) -> dict:
+    details = build_invoke_raw_command_details(
+        request_endpoint=request_endpoint,
+        request_data_format=request_data_format,
+        request_data=request_data,
+        response_endpoint=response_endpoint,
+        request_duration=request_duration,
+        response_duration=response_duration,
+    )
+    response = get_iot_client().invoke_raw_command(
+        digital_twin_instance_id=digital_twin_instance_id,
+        invoke_raw_command_details=details,
+    )
+    headers = getattr(response, "headers", {}) or {}
+    return {
+        "status_code": getattr(response, "status", None),
+        "opc_request_id": headers.get("opc-request-id"),
+    }
