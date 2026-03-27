@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -21,6 +23,13 @@ class DomainContextModel(BaseModel):
     region: str
     db_token_scope: str | None = None
     db_allowed_identity_domain_host: str | None = None
+
+
+class DataApiTokenModel(BaseModel):
+    access_token: str
+    token_type: str
+    expires_in: int
+    expires_at: datetime
 
 
 def success_result(data: dict) -> dict:
