@@ -23,11 +23,22 @@ def test_build_ords_base_url_uses_domain_group_host_and_domain_short_id():
 
 
 def test_mint_data_api_token_uses_password_grant_and_scope(monkeypatch):
+    observed = {}
+
     class FakeResponse:
+        def raise_for_status(self):
+            observed["raise_for_status_called"] = True
+
         def json(self):
             return {"access_token": "token-123", "token_type": "Bearer", "expires_in": 3600}
 
-    monkeypatch.setattr(data_plane.httpx, "post", lambda *args, **kwargs: FakeResponse())
+    def fake_post(*args, **kwargs):
+        observed["url"] = args[0]
+        observed["headers"] = kwargs["headers"]
+        observed["data"] = kwargs["data"]
+        return FakeResponse()
+
+    monkeypatch.setattr(data_plane.httpx, "post", fake_post)
 
     context = {
         "domain_short_id": "abc123",
@@ -48,6 +59,9 @@ def test_mint_data_api_token_uses_password_grant_and_scope(monkeypatch):
 
     assert result.access_token == "token-123"
     assert result.expires_at.isoformat() == "2026-03-26T13:00:00+00:00"
+    assert observed["raise_for_status_called"] is True
+    assert observed["url"] == "https://id.example.com/oauth2/v1/token"
+    assert observed["data"]["scope"] == "/xyz987/iot/abc123"
     assert build_twin_filter("ocid1.digitaltwininstance.oc1..aaaa") == {
         "$and": [{"digital_twin_instance_id": "ocid1.digitaltwininstance.oc1..aaaa"}]
     }
@@ -128,3 +142,144 @@ def test_list_collection_records_uses_limit_offset_until_target_count(monkeypatc
             "offset": 2,
         },
     ]
+
+
+def test_get_json_sends_bearer_token_and_raises_for_status(monkeypatch):
+    observed = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            observed["raise_for_status_called"] = True
+
+        def json(self):
+            return {"items": []}
+
+    def fake_get(url, *, headers, params, timeout):
+        observed["url"] = url
+        observed["headers"] = headers
+        observed["params"] = params
+        observed["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(data_plane.httpx, "get", fake_get)
+
+    payload = data_plane._get_json(
+        url="https://example.com/data",
+        token="token-123",
+        params={"limit": 1},
+    )
+
+    assert payload == {"items": []}
+    assert observed == {
+        "url": "https://example.com/data",
+        "headers": {"Authorization": "Bearer token-123"},
+        "params": {"limit": 1},
+        "timeout": 30.0,
+        "raise_for_status_called": True,
+    }
+
+
+def test_get_collection_record_builds_record_url(monkeypatch):
+    observed = {}
+
+    monkeypatch.setattr(
+        data_plane,
+        "_get_json",
+        lambda **kwargs: observed.update(kwargs) or {"id": "rc-1"},
+    )
+
+    result = data_plane.get_collection_record(
+        base_url="https://example.com/base",
+        path="/rawCommandData",
+        token="token-123",
+        record_id="rc-1",
+    )
+
+    assert result == {"id": "rc-1"}
+    assert observed == {
+        "url": "https://example.com/base/rawCommandData/rc-1",
+        "token": "token-123",
+        "params": {},
+    }
+
+
+def test_list_collection_records_stops_when_page_is_empty(monkeypatch):
+    observed_params = []
+    pages = iter([{"items": [{"id": "1"}]}, {"items": []}])
+
+    monkeypatch.setattr(
+        data_plane,
+        "_get_json",
+        lambda **kwargs: observed_params.append(kwargs["params"]) or next(pages),
+    )
+
+    result = list_collection_records(
+        base_url="https://example.com/base",
+        path="/snapshotData",
+        token="token-123",
+        params={},
+        target_count=4,
+    )
+
+    assert result == [{"id": "1"}]
+    assert observed_params == [
+        {"limit": 4, "offset": 0},
+        {"limit": 4, "offset": 1},
+    ]
+
+
+def test_collection_wrappers_use_expected_paths_and_filters(monkeypatch):
+    observed_get = {}
+    observed_list = []
+
+    monkeypatch.setattr(
+        data_plane,
+        "get_collection_record",
+        lambda **kwargs: observed_get.update(kwargs) or {"id": kwargs["record_id"]},
+    )
+    monkeypatch.setattr(
+        data_plane,
+        "list_collection_records",
+        lambda **kwargs: observed_list.append(kwargs) or [{"id": kwargs["path"]}],
+    )
+
+    detail = data_plane.get_raw_command_record(
+        base_url="https://example.com/base",
+        token="token-123",
+        request_id="rc-1",
+    )
+    raw = data_plane.list_raw_command_records(
+        base_url="https://example.com/base",
+        token="token-123",
+        digital_twin_instance_id="twin-1",
+        target_count=5,
+    )
+    snapshot = data_plane.list_snapshot_records(
+        base_url="https://example.com/base",
+        token="token-123",
+        digital_twin_instance_id="twin-1",
+        target_count=5,
+    )
+    rejected = data_plane.list_rejected_data_records(
+        base_url="https://example.com/base",
+        token="token-123",
+        digital_twin_instance_id="twin-1",
+        target_count=5,
+    )
+
+    assert detail == {"id": "rc-1"}
+    assert observed_get == {
+        "base_url": "https://example.com/base",
+        "path": "/rawCommandData",
+        "token": "token-123",
+        "record_id": "rc-1",
+    }
+    assert raw == [{"id": "/rawCommandData"}]
+    assert snapshot == [{"id": "/snapshotData"}]
+    assert rejected == [{"id": "/rejectedData"}]
+    assert [entry["path"] for entry in observed_list] == [
+        "/rawCommandData",
+        "/snapshotData",
+        "/rejectedData",
+    ]
+    assert all(entry["params"]["q"] == encode_q(build_twin_filter("twin-1")) for entry in observed_list)
