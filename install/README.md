@@ -26,7 +26,7 @@ uv run --python 3.13 python install/installer.py --servers oci-iot-mcp-server
 uv run --python 3.13 python install/installer.py --servers oci-iot-mcp-server,oci-api-mcp-server
 ```
 
-Use `all` to target every installer-supported server in `install/servers.toml`. Today that means every registry entry the local installer knows how to provision as a Python package or Python script. `all` does not guarantee that every selected server will end up usable; runtime creation and readiness checks still determine what is actually rendered.
+Use `all` to target every installer-supported server in `install/servers.toml`. Today that means every registry entry the local installer knows how to provision as a Python package or Python script. `all` does not guarantee that every selected server will end up usable; runtime creation and readiness checks still determine what is actually rendered. If one selected server fails during runtime provisioning, the installer records that server as `failed`, continues the rest of the selection, and reports the final outcome in `install/generated/reports/`.
 
 ```bash
 uv run --python 3.13 python install/installer.py --servers all
@@ -34,6 +34,7 @@ uv run --python 3.13 python install/installer.py --servers all
 
 Use `--force` to remove and regenerate `install/generated/` before writing new wrappers, example configs, and reports.
 Without `--force`, the installer still refreshes its managed generated subdirectories so wrappers, examples, and reports reflect the current ready-server set.
+Re-running the installer against an existing runtime is supported; the per-server virtualenv is reused and the selected server package or requirements are refreshed in place.
 
 ## What Gets Written
 
@@ -65,7 +66,7 @@ To use them manually:
 
 - `ready`: expected runtime artifacts exist, so wrappers and example config entries are generated.
 - `blocked`: the runtime exists, but an additional prerequisite is missing. Blocked servers are reported but not rendered into wrapper/config examples.
-- `failed`: required runtime artifacts are missing. Failed servers are reported but not rendered into wrapper/config examples.
+- `failed`: runtime provisioning failed or required runtime artifacts are missing. Failed servers are reported but not rendered into wrapper/config examples.
 
 ## Blocked Server Remediation
 
