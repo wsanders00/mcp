@@ -34,6 +34,8 @@ htmlcov/
 mcphost*.json
 /ai/
 /.worktrees/
+/install/generated/
+/install/runtime/
 
 # Re-include specific test assets that may be hidden by broad global ignore rules.
 !src/oci-iot-mcp-server/oracle/oci_iot_mcp_server/tests/

@@ -1,0 +1,2 @@
+"""Installer registry package."""
+

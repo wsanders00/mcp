@@ -1,0 +1,229 @@
+[servers.dbtools-mcp-server]
+id = "dbtools-mcp-server"
+display_name = "DBTools MCP Server"
+source_path = "src/dbtools-mcp-server"
+install_mode = "script"
+launch_mode = "python_script"
+entrypoint = "src/dbtools-mcp-server/dbtools-mcp-server.py"
+python_version = "3.13"
+requirements_path = "src/dbtools-mcp-server/requirements.txt"
+
+[servers.mysql-mcp-server]
+id = "mysql-mcp-server"
+display_name = "MySQL MCP Server"
+source_path = "src/mysql-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.mysql_mcp_server"
+python_version = "3.12"
+
+[servers.oci-api-mcp-server]
+id = "oci-api-mcp-server"
+display_name = "OCI API MCP Server"
+source_path = "src/oci-api-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-api-mcp-server"
+python_version = "3.13"
+
+[servers.oci-cloud-guard-mcp-server]
+id = "oci-cloud-guard-mcp-server"
+display_name = "OCI Cloud Guard MCP Server"
+source_path = "src/oci-cloud-guard-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-cloud-guard-mcp-server"
+python_version = "3.13"
+
+[servers.oci-cloud-mcp-server]
+id = "oci-cloud-mcp-server"
+display_name = "OCI Cloud MCP Server"
+source_path = "src/oci-cloud-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-cloud-mcp-server"
+python_version = "3.13"
+
+[servers.oci-compute-instance-agent-mcp-server]
+id = "oci-compute-instance-agent-mcp-server"
+display_name = "OCI Compute Instance Agent MCP Server"
+source_path = "src/oci-compute-instance-agent-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-compute-instance-agent-mcp-server"
+python_version = "3.13"
+
+[servers.oci-compute-mcp-server]
+id = "oci-compute-mcp-server"
+display_name = "OCI Compute MCP Server"
+source_path = "src/oci-compute-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-compute-mcp-server"
+python_version = "3.13"
+
+[servers.oci-database-mcp-server]
+id = "oci-database-mcp-server"
+display_name = "OCI Database MCP Server"
+source_path = "src/oci-database-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-database-mcp-server"
+python_version = "3.13"
+
+[servers.oci-faaas-mcp-server]
+id = "oci-faaas-mcp-server"
+display_name = "OCI FaaS MCP Server"
+source_path = "src/oci-faaas-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-faaas-mcp-server"
+python_version = "3.13"
+
+[servers.oci-identity-mcp-server]
+id = "oci-identity-mcp-server"
+display_name = "OCI Identity MCP Server"
+source_path = "src/oci-identity-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-identity-mcp-server"
+python_version = "3.13"
+
+[servers.oci-iot-mcp-server]
+id = "oci-iot-mcp-server"
+display_name = "OCI IoT MCP Server"
+source_path = "src/oci-iot-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-iot-mcp-server"
+python_version = "3.13"
+
+[servers.oci-limits-mcp-server]
+id = "oci-limits-mcp-server"
+display_name = "OCI Limits MCP Server"
+source_path = "src/oci-limits-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-limits-mcp-server"
+python_version = "3.13"
+
+[servers.oci-load-balancer-mcp-server]
+id = "oci-load-balancer-mcp-server"
+display_name = "OCI Load Balancer MCP Server"
+source_path = "src/oci-load-balancer-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-load-balancer-mcp-server"
+python_version = "3.13"
+
+[servers.oci-logging-mcp-server]
+id = "oci-logging-mcp-server"
+display_name = "OCI Logging MCP Server"
+source_path = "src/oci-logging-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-logging-mcp-server"
+python_version = "3.13"
+
+[servers.oci-migration-mcp-server]
+id = "oci-migration-mcp-server"
+display_name = "OCI Migration MCP Server"
+source_path = "src/oci-migration-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-migration-mcp-server"
+python_version = "3.13"
+
+[servers.oci-monitoring-mcp-server]
+id = "oci-monitoring-mcp-server"
+display_name = "OCI Monitoring MCP Server"
+source_path = "src/oci-monitoring-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-monitoring-mcp-server"
+python_version = "3.13"
+
+[servers.oci-network-load-balancer-mcp-server]
+id = "oci-network-load-balancer-mcp-server"
+display_name = "OCI Network Load Balancer MCP Server"
+source_path = "src/oci-network-load-balancer-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-network-load-balancer-mcp-server"
+python_version = "3.13"
+
+[servers.oci-networking-mcp-server]
+id = "oci-networking-mcp-server"
+display_name = "OCI Networking MCP Server"
+source_path = "src/oci-networking-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-networking-mcp-server"
+python_version = "3.13"
+
+[servers.oci-object-storage-mcp-server]
+id = "oci-object-storage-mcp-server"
+display_name = "OCI Object Storage MCP Server"
+source_path = "src/oci-object-storage-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-object-storage-mcp-server"
+python_version = "3.13"
+
+[servers.oci-pricing-mcp-server]
+id = "oci-pricing-mcp-server"
+display_name = "OCI Pricing MCP Server"
+source_path = "src/oci-pricing-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oci-pricing-mcp"
+python_version = "3.11"
+
+[servers.oci-recovery-mcp-server]
+id = "oci-recovery-mcp-server"
+display_name = "OCI Recovery MCP Server"
+source_path = "src/oci-recovery-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-recovery-mcp-server"
+python_version = "3.13"
+
+[servers.oci-registry-mcp-server]
+id = "oci-registry-mcp-server"
+display_name = "OCI Registry MCP Server"
+source_path = "src/oci-registry-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-registry-mcp-server"
+python_version = "3.13"
+
+[servers.oci-resource-search-mcp-server]
+id = "oci-resource-search-mcp-server"
+display_name = "OCI Resource Search MCP Server"
+source_path = "src/oci-resource-search-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-resource-search-mcp-server"
+python_version = "3.13"
+
+[servers.oci-usage-mcp-server]
+id = "oci-usage-mcp-server"
+display_name = "OCI Usage MCP Server"
+source_path = "src/oci-usage-mcp-server"
+install_mode = "package"
+launch_mode = "console_script"
+entrypoint = "oracle.oci-usage-mcp-server"
+python_version = "3.13"
+
+[servers.oracle-db-doc-mcp-server]
+id = "oracle-db-doc-mcp-server"
+display_name = "Oracle DB Doc MCP Server"
+source_path = "src/oracle-db-doc-mcp-server"
+install_mode = "script"
+launch_mode = "python_script"
+entrypoint = "src/oracle-db-doc-mcp-server/oracle-db-doc-mcp-server.py"
+launch_args = ["mcp"]
+python_version = "3.13"
+requirements_path = "src/oracle-db-doc-mcp-server/requirements.txt"
+readiness_check = "oracle_db_doc_index"
+notes = "Selectable for install; blocked until the local Oracle DB Doc index is available."
