@@ -21,6 +21,7 @@ from install.runtime_ops import RuntimePlan, build_runtime_plan, run_runtime_pla
 
 
 PROMPT = "Select server(s) to install (comma-separated or 'all'): "
+DEFAULT_OUTPUT_LEVEL = "normal"
 
 
 @dataclass(frozen=True)
@@ -33,8 +34,15 @@ class InstallRunResult:
     render_output: object
 
 
+class InstallArgumentParser(argparse.ArgumentParser):
+    def parse_args(self, args=None, namespace=None):
+        parsed = super().parse_args(args=args, namespace=namespace)
+        parsed.output_level = _resolve_output_level(parsed)
+        return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Local MCP installer")
+    parser = InstallArgumentParser(description="Local MCP installer")
     parser.add_argument(
         "--servers",
         help="Comma-separated server ids to install, or 'all' for every supported server.",
@@ -43,6 +51,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="Remove and regenerate install/generated/ before writing new artifacts.",
+    )
+    parser.add_argument(
+        "--silent",
+        action="store_true",
+        help="Suppress installer output.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print per-server installer results.",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print per-server results plus runtime path details. Implies --verbose.",
     )
     return parser
 
@@ -77,6 +100,16 @@ def _coerce_selection(source: argparse.Namespace | str | Iterable[str] | None) -
             raise TypeError("Selection iterables must contain only strings.")
         return ",".join(parts)
     raise TypeError("Selection must be an argparse.Namespace, string, iterable of strings, or None.")
+
+
+def _resolve_output_level(args: argparse.Namespace) -> str:
+    if getattr(args, "silent", False):
+        return "silent"
+    if getattr(args, "debug", False):
+        return "debug"
+    if getattr(args, "verbose", False):
+        return "verbose"
+    return DEFAULT_OUTPUT_LEVEL
 
 
 def _normalize_selection(selection: str) -> str:
@@ -129,6 +162,14 @@ def run_install(
         readiness_results_tuple,
         root,
         force=args.force,
+    )
+
+    _emit_install_output(
+        output_level=args.output_level,
+        selection=tuple(spec.id for spec in specs),
+        runtime_plans=runtime_plans_tuple,
+        readiness_results=readiness_results_tuple,
+        render_output=render_output,
     )
 
     return InstallRunResult(
@@ -191,6 +232,99 @@ def _runtime_failure_result(plan: RuntimePlan | object, exc: Exception) -> Readi
         status="failed",
         message=f"Runtime provisioning failed: {exc}",
         checked_paths=checked_paths,
+    )
+
+
+def _emit_install_output(
+    *,
+    output_level: str,
+    selection: tuple[str, ...],
+    runtime_plans: tuple[RuntimePlan | object, ...],
+    readiness_results: tuple[ReadinessResult, ...],
+    render_output: object,
+) -> None:
+    if output_level == "silent":
+        return
+
+    lines = _summary_lines(selection, readiness_results, render_output)
+    if output_level in {"verbose", "debug"}:
+        lines.extend(_server_result_lines(readiness_results))
+    if output_level == "debug":
+        lines.extend(_runtime_debug_lines(runtime_plans))
+
+    for line in lines:
+        print(line)
+
+
+def _summary_lines(
+    selection: tuple[str, ...],
+    readiness_results: tuple[ReadinessResult, ...],
+    render_output: object,
+) -> list[str]:
+    ready_count, blocked_count, failed_count = _status_counts(readiness_results)
+    lines = [
+        f"Selected servers: {', '.join(selection)}",
+        f"Ready: {ready_count}  Blocked: {blocked_count}  Failed: {failed_count}",
+    ]
+
+    for label, attr_name in (
+        ("Generated root", "generated_root"),
+        ("Codex example", "codex_example_path"),
+        ("VS Code example", "vscode_example_path"),
+        ("Report", "report_markdown_path"),
+    ):
+        artifact_path = getattr(render_output, attr_name, None)
+        if artifact_path is not None:
+            lines.append(f"{label}: {artifact_path}")
+
+    return lines
+
+
+def _server_result_lines(readiness_results: tuple[ReadinessResult, ...]) -> list[str]:
+    if not readiness_results:
+        return []
+
+    return [
+        "Per-server results:",
+        *[
+            f"- {result.server_id}: {result.status} - {result.message}"
+            + _missing_paths_suffix(result)
+            for result in readiness_results
+        ],
+    ]
+
+
+def _missing_paths_suffix(result: ReadinessResult) -> str:
+    if not result.missing_paths:
+        return ""
+    missing_csv = ", ".join(str(path) for path in result.missing_paths)
+    return f" (missing: {missing_csv})"
+
+
+def _runtime_debug_lines(runtime_plans: tuple[RuntimePlan | object, ...]) -> list[str]:
+    if not runtime_plans:
+        return []
+
+    lines = ["Runtime details:"]
+    for plan in runtime_plans:
+        lines.append(f"- {plan.spec.id}")
+        for label, attr_name in (
+            ("runtime_dir", "server_runtime_dir"),
+            ("venv_dir", "venv_dir"),
+            ("python_path", "python_path"),
+            ("install_target", "install_target"),
+        ):
+            value = getattr(plan, attr_name, None)
+            if value is not None:
+                lines.append(f"  {label}: {value}")
+    return lines
+
+
+def _status_counts(readiness_results: tuple[ReadinessResult, ...]) -> tuple[int, int, int]:
+    return (
+        sum(1 for result in readiness_results if result.status == "ready"),
+        sum(1 for result in readiness_results if result.status == "blocked"),
+        sum(1 for result in readiness_results if result.status == "failed"),
     )
 
 

@@ -36,6 +36,14 @@ Use `--force` to remove and regenerate `install/generated/` before writing new w
 Without `--force`, the installer still refreshes its managed generated subdirectories so wrappers, examples, and reports reflect the current ready-server set.
 Re-running the installer against an existing runtime is supported; the per-server virtualenv is reused and the selected server package or requirements are refreshed in place.
 
+By default, the installer prints a concise summary that includes the selected servers, readiness counts, and the generated artifact locations.
+
+Use output-level flags to control how much it prints:
+
+- `--silent`: suppress installer output.
+- `--verbose`: include per-server readiness results.
+- `--debug`: include per-server readiness plus runtime path details. This already includes the `--verbose` output, so `--verbose --debug` behaves the same as `--debug`.
+
 ## What Gets Written
 
 Runtime environments are created per server under:

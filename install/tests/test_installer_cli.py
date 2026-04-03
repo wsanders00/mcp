@@ -27,6 +27,37 @@ def test_build_parser_accepts_force_flag():
     assert args.force is True
 
 
+@pytest.mark.parametrize(
+    ("flag", "expected"),
+    [
+        ("--silent", "silent"),
+        ("--verbose", "verbose"),
+        ("--debug", "debug"),
+    ],
+)
+def test_build_parser_accepts_output_level_flags(flag, expected):
+    parser = _installer_module().build_parser()
+
+    args = parser.parse_args([flag])
+
+    assert args.output_level == expected
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--verbose", "--debug"],
+        ["--debug", "--verbose"],
+    ],
+)
+def test_build_parser_accepts_debug_and_verbose_together(argv):
+    parser = _installer_module().build_parser()
+
+    args = parser.parse_args(argv)
+
+    assert args.output_level == "debug"
+
+
 def test_choose_selection_uses_explicit_servers_and_normalizes_spacing():
     installer = _installer_module()
     args = installer.build_parser().parse_args(

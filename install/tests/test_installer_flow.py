@@ -28,6 +28,39 @@ def _make_server_spec(**overrides: object) -> ServerSpec:
     return ServerSpec(**values)
 
 
+def _make_plan(spec: ServerSpec, repo_root: Path):
+    return type(
+        "Plan",
+        (),
+        {
+            "spec": spec,
+            "repo_root": repo_root,
+            "server_runtime_dir": repo_root / "install" / "runtime" / spec.id,
+            "venv_dir": repo_root / "install" / "runtime" / spec.id / "venv",
+            "python_path": repo_root / "install" / "runtime" / spec.id / "venv" / "bin" / "python",
+            "install_target": repo_root / spec.source_path,
+        },
+    )()
+
+
+def _make_render_output(repo_root: Path, *wrapper_ids: str):
+    return type(
+        "RenderOutput",
+        (),
+        {
+            "generated_root": repo_root / "install" / "generated",
+            "wrapper_paths": tuple(
+                repo_root / "install" / "generated" / "wrappers" / f"{server_id}.sh"
+                for server_id in wrapper_ids
+            ),
+            "codex_example_path": repo_root / "install" / "generated" / "examples" / "codex.example.json",
+            "vscode_example_path": repo_root / "install" / "generated" / "examples" / "vscode.mcp.json",
+            "report_markdown_path": repo_root / "install" / "generated" / "reports" / "install-report.md",
+            "report_json_path": repo_root / "install" / "generated" / "reports" / "install-report.json",
+        },
+    )()
+
+
 def test_run_install_orchestrates_runtime_readiness_and_render_steps(tmp_path: Path):
     installer = _installer_module()
     repo_root = tmp_path / "repo"
@@ -119,6 +152,179 @@ def test_run_install_orchestrates_runtime_readiness_and_render_steps(tmp_path: P
     ]
 
 
+def test_run_install_prints_general_summary_by_default(tmp_path: Path, capsys):
+    installer = _installer_module()
+    repo_root = tmp_path / "repo"
+    package_spec = _make_server_spec()
+    blocked_spec = _make_server_spec(
+        id="dbtools-mcp-server",
+        display_name="DBTools MCP Server",
+        source_path="src/dbtools-mcp-server",
+        install_mode="script",
+        launch_mode="python_script",
+        entrypoint="src/dbtools-mcp-server/dbtools-mcp-server.py",
+        requirements_path="src/dbtools-mcp-server/requirements.txt",
+    )
+    registry = {
+        package_spec.id: package_spec,
+        blocked_spec.id: blocked_spec,
+    }
+    package_plan = type("Plan", (), {"spec": package_spec})()
+    blocked_plan = type("Plan", (), {"spec": blocked_spec})()
+    ready_result = ReadinessResult(server_id=package_spec.id, status="ready", message="Ready.")
+    blocked_result = ReadinessResult(server_id=blocked_spec.id, status="blocked", message="Blocked.")
+    render_output = type(
+        "RenderOutput",
+        (),
+        {
+            "generated_root": repo_root / "install" / "generated",
+            "wrapper_paths": (repo_root / "install" / "generated" / "wrappers" / f"{package_spec.id}.sh",),
+            "codex_example_path": repo_root / "install" / "generated" / "examples" / "codex.example.json",
+            "vscode_example_path": repo_root / "install" / "generated" / "examples" / "vscode.mcp.json",
+            "report_markdown_path": repo_root / "install" / "generated" / "reports" / "install-report.md",
+            "report_json_path": repo_root / "install" / "generated" / "reports" / "install-report.json",
+        },
+    )()
+
+    installer.run_install(
+        ["--servers", "oci-api-mcp-server,dbtools-mcp-server"],
+        repo_root=repo_root,
+        load_registry_fn=lambda _path: registry,
+        resolve_selection_fn=lambda _selection, _registry: [package_spec, blocked_spec],
+        build_runtime_plan_fn=lambda spec, _root: package_plan if spec.id == package_spec.id else blocked_plan,
+        run_runtime_plan_fn=lambda plan: plan,
+        classify_runtime_readiness_fn=(
+            lambda plan, user_home=None: ready_result if plan.spec.id == package_spec.id else blocked_result
+        ),
+        render_install_artifacts_fn=lambda *_args, **_kwargs: render_output,
+    )
+
+    captured = capsys.readouterr()
+
+    assert "Selected servers: oci-api-mcp-server, dbtools-mcp-server" in captured.out
+    assert "Ready: 1  Blocked: 1  Failed: 0" in captured.out
+    assert str(render_output.report_markdown_path) in captured.out
+    assert captured.err == ""
+
+
+def test_run_install_silent_flag_suppresses_output(tmp_path: Path, capsys):
+    installer = _installer_module()
+    repo_root = tmp_path / "repo"
+    package_spec = _make_server_spec()
+    package_plan = _make_plan(package_spec, repo_root)
+    ready_result = ReadinessResult(server_id=package_spec.id, status="ready", message="Ready.")
+    render_output = _make_render_output(repo_root, package_spec.id)
+
+    installer.run_install(
+        ["--servers", package_spec.id, "--silent"],
+        repo_root=repo_root,
+        load_registry_fn=lambda _path: {package_spec.id: package_spec},
+        resolve_selection_fn=lambda _selection, _registry: [package_spec],
+        build_runtime_plan_fn=lambda _spec, _root: package_plan,
+        run_runtime_plan_fn=lambda plan: plan,
+        classify_runtime_readiness_fn=lambda _plan, user_home=None: ready_result,
+        render_install_artifacts_fn=lambda *_args, **_kwargs: render_output,
+    )
+
+    captured = capsys.readouterr()
+
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_run_install_verbose_flag_prints_per_server_statuses(tmp_path: Path, capsys):
+    installer = _installer_module()
+    repo_root = tmp_path / "repo"
+    package_spec = _make_server_spec()
+    blocked_spec = _make_server_spec(
+        id="dbtools-mcp-server",
+        display_name="DBTools MCP Server",
+        source_path="src/dbtools-mcp-server",
+        install_mode="script",
+        launch_mode="python_script",
+        entrypoint="src/dbtools-mcp-server/dbtools-mcp-server.py",
+        requirements_path="src/dbtools-mcp-server/requirements.txt",
+    )
+    package_plan = _make_plan(package_spec, repo_root)
+    blocked_plan = _make_plan(blocked_spec, repo_root)
+    ready_result = ReadinessResult(server_id=package_spec.id, status="ready", message="Ready.")
+    blocked_result = ReadinessResult(server_id=blocked_spec.id, status="blocked", message="Blocked.")
+    render_output = _make_render_output(repo_root, package_spec.id)
+
+    installer.run_install(
+        ["--servers", f"{package_spec.id},{blocked_spec.id}", "--verbose"],
+        repo_root=repo_root,
+        load_registry_fn=lambda _path: {package_spec.id: package_spec, blocked_spec.id: blocked_spec},
+        resolve_selection_fn=lambda _selection, _registry: [package_spec, blocked_spec],
+        build_runtime_plan_fn=lambda spec, _root: package_plan if spec.id == package_spec.id else blocked_plan,
+        run_runtime_plan_fn=lambda plan: plan,
+        classify_runtime_readiness_fn=(
+            lambda plan, user_home=None: ready_result if plan.spec.id == package_spec.id else blocked_result
+        ),
+        render_install_artifacts_fn=lambda *_args, **_kwargs: render_output,
+    )
+
+    captured = capsys.readouterr()
+
+    assert "- oci-api-mcp-server: ready - Ready." in captured.out
+    assert "- dbtools-mcp-server: blocked - Blocked." in captured.out
+    assert captured.err == ""
+
+
+def test_run_install_debug_flag_prints_runtime_plan_details(tmp_path: Path, capsys):
+    installer = _installer_module()
+    repo_root = tmp_path / "repo"
+    package_spec = _make_server_spec()
+    package_plan = _make_plan(package_spec, repo_root)
+    ready_result = ReadinessResult(server_id=package_spec.id, status="ready", message="Ready.")
+    render_output = _make_render_output(repo_root, package_spec.id)
+
+    installer.run_install(
+        ["--servers", package_spec.id, "--debug"],
+        repo_root=repo_root,
+        load_registry_fn=lambda _path: {package_spec.id: package_spec},
+        resolve_selection_fn=lambda _selection, _registry: [package_spec],
+        build_runtime_plan_fn=lambda _spec, _root: package_plan,
+        run_runtime_plan_fn=lambda plan: plan,
+        classify_runtime_readiness_fn=lambda _plan, user_home=None: ready_result,
+        render_install_artifacts_fn=lambda *_args, **_kwargs: render_output,
+    )
+
+    captured = capsys.readouterr()
+
+    assert "Runtime details:" in captured.out
+    assert str(package_plan.python_path) in captured.out
+    assert str(package_plan.install_target) in captured.out
+    assert captured.err == ""
+
+
+def test_run_install_debug_and_verbose_flags_match_debug_output(tmp_path: Path, capsys):
+    installer = _installer_module()
+    repo_root = tmp_path / "repo"
+    package_spec = _make_server_spec()
+    package_plan = _make_plan(package_spec, repo_root)
+    ready_result = ReadinessResult(server_id=package_spec.id, status="ready", message="Ready.")
+    render_output = _make_render_output(repo_root, package_spec.id)
+
+    result = installer.run_install(
+        ["--servers", package_spec.id, "--verbose", "--debug"],
+        repo_root=repo_root,
+        load_registry_fn=lambda _path: {package_spec.id: package_spec},
+        resolve_selection_fn=lambda _selection, _registry: [package_spec],
+        build_runtime_plan_fn=lambda _spec, _root: package_plan,
+        run_runtime_plan_fn=lambda plan: plan,
+        classify_runtime_readiness_fn=lambda _plan, user_home=None: ready_result,
+        render_install_artifacts_fn=lambda *_args, **_kwargs: render_output,
+    )
+
+    captured = capsys.readouterr()
+
+    assert result.args.output_level == "debug"
+    assert "Per-server results:" in captured.out
+    assert "Runtime details:" in captured.out
+    assert captured.err == ""
+
+
 def test_installer_script_invokes_main_for_help_output():
     repo_root = Path(__file__).resolve().parents[2]
 
@@ -134,6 +340,9 @@ def test_installer_script_invokes_main_for_help_output():
     assert "Local MCP installer" in result.stdout
     assert "--servers" in result.stdout
     assert "--force" in result.stdout
+    assert "--silent" in result.stdout
+    assert "--verbose" in result.stdout
+    assert "--debug" in result.stdout
 
 
 def test_run_install_continues_when_runtime_provisioning_fails(tmp_path: Path):
