@@ -91,7 +91,12 @@ def test_get_identity_client_for_profile_builds_security_token_client(monkeypatc
     }
 
     monkeypatch.setattr(server.oci.config, "from_file", lambda profile_name: dict(config))
-    monkeypatch.setattr(server.oci.signer, "load_private_key_from_file", lambda path: f"key:{path}")
+    monkeypatch.setattr(server.os.path, "exists", lambda path: path == "/tmp/security.token")
+    monkeypatch.setattr(
+        server.oci.signer,
+        "load_private_key_from_file",
+        lambda path, pass_phrase=None: f"key:{path}",
+    )
     monkeypatch.setattr(
         builtins,
         "open",
@@ -115,9 +120,207 @@ def test_get_identity_client_for_profile_builds_security_token_client(monkeypatc
     assert client["config"]["additional_user_agent"].endswith(f"/{server.__version__}")
 
 
+def test_get_identity_client_uses_api_key_fallback_when_security_token_missing(monkeypatch):
+    server._get_identity_client_for_profile.cache_clear()
+    monkeypatch.setenv("OCI_IOT_AUTH_TYPE", "auto")
+    monkeypatch.setattr(
+        server.oci.config,
+        "from_file",
+        lambda profile_name: {
+            "profile": profile_name,
+            "key_file": "/tmp/api-key.pem",
+            "tenancy": "ocid1.tenancy.oc1..bbbb",
+            "user": "ocid1.user.oc1..bbbb",
+            "fingerprint": "aa:bb",
+            "region": "us-ashburn-1",
+        },
+    )
+    monkeypatch.setattr(
+        server.oci.signer,
+        "Signer",
+        lambda **kwargs: {"kind": "api_key", "kwargs": kwargs},
+    )
+    monkeypatch.setattr(
+        server.oci.identity,
+        "IdentityClient",
+        lambda cfg, signer=None: {"config": cfg, "signer": signer},
+    )
+
+    client, tenancy_id = server.get_identity_client("ALT")
+
+    assert tenancy_id == "ocid1.tenancy.oc1..bbbb"
+    assert client["signer"]["kind"] == "api_key"
+    assert client["config"]["additional_user_agent"].endswith(f"/{server.__version__}")
+
+
+def test_get_identity_client_uses_instance_principal_tenancy(monkeypatch):
+    server._get_identity_client_for_profile.cache_clear()
+    signer = SimpleNamespace(
+        kind="instance_principal",
+        tenancy_id="ocid1.tenancy.oc1..cccc",
+        region="us-phoenix-1",
+    )
+
+    monkeypatch.setenv("OCI_IOT_AUTH_TYPE", "instance_principal")
+    monkeypatch.setattr(
+        server.oci.auth.signers,
+        "InstancePrincipalsSecurityTokenSigner",
+        lambda: signer,
+    )
+    monkeypatch.setattr(
+        server.oci.identity,
+        "IdentityClient",
+        lambda cfg, signer=None: {"config": cfg, "signer": signer},
+    )
+
+    client, tenancy_id = server.get_identity_client("ALT")
+
+    assert tenancy_id == "ocid1.tenancy.oc1..cccc"
+    assert client["signer"] is signer
+    assert client["config"]["region"] == "us-phoenix-1"
+
+
+def test_get_identity_client_uses_resource_principal_tenancy(monkeypatch):
+    server._get_identity_client_for_profile.cache_clear()
+    signer = SimpleNamespace(
+        kind="resource_principal",
+        tenancy_id="ocid1.tenancy.oc1..dddd",
+        region="us-chicago-1",
+    )
+
+    monkeypatch.setenv("OCI_IOT_AUTH_TYPE", "resource_principal")
+    monkeypatch.setattr(
+        server.oci.auth.signers,
+        "get_resource_principals_signer",
+        lambda: signer,
+    )
+    monkeypatch.setattr(
+        server.oci.identity,
+        "IdentityClient",
+        lambda cfg, signer=None: {"config": cfg, "signer": signer},
+    )
+
+    client, tenancy_id = server.get_identity_client("ALT")
+
+    assert tenancy_id == "ocid1.tenancy.oc1..dddd"
+    assert client["signer"] is signer
+    assert client["config"]["region"] == "us-chicago-1"
+
+
+def test_get_identity_client_uses_instance_principal_delegation_tenancy(monkeypatch):
+    server._get_identity_client_for_profile.cache_clear()
+    signer = SimpleNamespace(
+        kind="instance_principal_delegation",
+        tenancy_id="ocid1.tenancy.oc1..delegated1",
+        region="us-ashburn-1",
+    )
+
+    monkeypatch.setenv("OCI_IOT_AUTH_TYPE", "instance_principal_delegation")
+    monkeypatch.setenv("OCI_IOT_DELEGATION_TOKEN", "delegation-token-123")
+    monkeypatch.setattr(
+        server.oci.auth.signers,
+        "InstancePrincipalsDelegationTokenSigner",
+        lambda **kwargs: signer,
+    )
+    monkeypatch.setattr(
+        server.oci.identity,
+        "IdentityClient",
+        lambda cfg, signer=None: {"config": cfg, "signer": signer},
+    )
+
+    client, tenancy_id = server.get_identity_client("ALT")
+
+    assert tenancy_id == "ocid1.tenancy.oc1..delegated1"
+    assert client["signer"] is signer
+    assert client["config"]["region"] == "us-ashburn-1"
+
+
+def test_get_identity_client_uses_resource_principal_delegation_tenancy(monkeypatch):
+    server._get_identity_client_for_profile.cache_clear()
+    signer = SimpleNamespace(
+        kind="resource_principal_delegation",
+        tenancy_id="ocid1.tenancy.oc1..delegated2",
+        region="us-sanjose-1",
+    )
+
+    monkeypatch.setenv("OCI_IOT_AUTH_TYPE", "resource_principal_delegation")
+    monkeypatch.setenv("OCI_IOT_DELEGATION_TOKEN", "delegation-token-456")
+    monkeypatch.setattr(
+        server.oci.auth.signers,
+        "get_resource_principal_delegation_token_signer",
+        lambda delegation_token, resource_principal_token_path_provider=None: signer,
+    )
+    monkeypatch.setattr(
+        server.oci.identity,
+        "IdentityClient",
+        lambda cfg, signer=None: {"config": cfg, "signer": signer},
+    )
+
+    client, tenancy_id = server.get_identity_client("ALT")
+
+    assert tenancy_id == "ocid1.tenancy.oc1..delegated2"
+    assert client["signer"] is signer
+    assert client["config"]["region"] == "us-sanjose-1"
+
+
+def test_get_identity_client_uses_oke_workload_identity_tenancy_override(monkeypatch):
+    server._get_identity_client_for_profile.cache_clear()
+    signer = SimpleNamespace(
+        kind="oke_workload_identity",
+        region="us-phoenix-1",
+    )
+
+    monkeypatch.setenv("OCI_IOT_AUTH_TYPE", "oke_workload_identity")
+    monkeypatch.setenv("OCI_IOT_TENANCY_ID_OVERRIDE", "ocid1.tenancy.oc1..override")
+    monkeypatch.setattr(
+        server.oci.auth.signers,
+        "get_oke_workload_identity_resource_principal_signer",
+        lambda service_account_token_path=None, service_account_token=None, **kwargs: signer,
+    )
+    monkeypatch.setattr(
+        server.oci.identity,
+        "IdentityClient",
+        lambda cfg, signer=None: {"config": cfg, "signer": signer},
+    )
+
+    client, tenancy_id = server.get_identity_client("ALT")
+
+    assert tenancy_id == "ocid1.tenancy.oc1..override"
+    assert client["signer"] is signer
+    assert client["config"]["region"] == "us-phoenix-1"
+
+
+def test_get_identity_client_rejects_oke_workload_identity_without_tenancy_override(monkeypatch):
+    server._get_identity_client_for_profile.cache_clear()
+    signer = SimpleNamespace(
+        kind="oke_workload_identity",
+        region="us-phoenix-1",
+    )
+
+    monkeypatch.setenv("OCI_IOT_AUTH_TYPE", "oke_workload_identity")
+    monkeypatch.delenv("OCI_IOT_TENANCY_ID_OVERRIDE", raising=False)
+    monkeypatch.setattr(
+        server.oci.auth.signers,
+        "get_oke_workload_identity_resource_principal_signer",
+        lambda service_account_token_path=None, service_account_token=None, **kwargs: signer,
+    )
+    monkeypatch.setattr(
+        server.oci.identity,
+        "IdentityClient",
+        lambda cfg, signer=None: {"config": cfg, "signer": signer},
+    )
+
+    with pytest.raises(ValueError, match="tenancy"):
+        server.get_identity_client("ALT")
+
+
 def test_get_identity_client_uses_default_profile_from_env(monkeypatch):
     monkeypatch.setenv("OCI_CONFIG_PROFILE", "ALT")
-    monkeypatch.setattr(server, "_get_identity_client_for_profile", lambda profile_name: ("client", profile_name))
+    monkeypatch.setattr(
+        server,
+        "_get_identity_client_for_profile",
+        lambda profile_name, auth_type=None: ("client", profile_name),
+    )
 
     assert server.get_identity_client() == ("client", "ALT")
 
@@ -136,7 +339,7 @@ def test_get_identity_client_logs_and_reraises_known_errors(monkeypatch, excepti
     monkeypatch.setattr(
         server,
         "_get_identity_client_for_profile",
-        lambda profile_name: (_ for _ in ()).throw(exception),
+        lambda profile_name, auth_type=None: (_ for _ in ()).throw(exception),
     )
 
     with pytest.raises(type(exception)):
@@ -182,6 +385,24 @@ def test_oci_config_token_query_and_url_helpers_cover_success_and_failure_paths(
     )
     assert server._build_iot_data_api_url("group-short", "domain-short", "/rawData", region="eu-frankfurt-1") == (
         "https://group-short.data.iot.eu-frankfurt-1.oci.oraclecloud.com/ords/domain-short/rawData"
+    )
+
+
+def test_build_iot_data_api_url_uses_principal_region_default(monkeypatch):
+    monkeypatch.setenv("OCI_IOT_AUTH_TYPE", "instance_principal")
+    monkeypatch.setattr(server, "get_default_region", lambda profile_name=None, auth_type=None: "us-phoenix-1")
+
+    assert server._build_iot_data_api_url("group-short", "domain-short", "/rawData") == (
+        "https://group-short.data.iot.us-phoenix-1.oci.oraclecloud.com/ords/domain-short/rawData"
+    )
+
+
+def test_build_iot_data_api_url_uses_oke_region_default(monkeypatch):
+    monkeypatch.setenv("OCI_IOT_AUTH_TYPE", "oke_workload_identity")
+    monkeypatch.setattr(server, "get_default_region", lambda profile_name=None, auth_type=None: "us-sanjose-1")
+
+    assert server._build_iot_data_api_url("group-short", "domain-short", "/rawData") == (
+        "https://group-short.data.iot.us-sanjose-1.oci.oraclecloud.com/ords/domain-short/rawData"
     )
 
 
