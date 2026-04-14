@@ -44,3 +44,7 @@ mcphost*.json
 !tests/e2e/features/
 !tests/e2e/features/steps/
 !tests/e2e/features/steps/oci-iot-mcp-server-steps.py
+
+# GoldenGate MCP local runtime artifacts
+**/logs/
+**/oracle-goldengate-mcp-server.env
