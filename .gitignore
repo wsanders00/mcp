@@ -32,7 +32,9 @@ htmlcov/
 
 # misc
 mcphost*.json
+# Local planning/design folders are worktree-only and should not be pushed.
 /ai/
+/docs/
 /.worktrees/
 /install/generated/
 /install/runtime/
