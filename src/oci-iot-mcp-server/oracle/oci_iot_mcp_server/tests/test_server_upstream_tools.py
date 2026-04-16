@@ -5,6 +5,11 @@ from urllib.error import HTTPError
 
 import pytest
 from oci.exceptions import ConfigFileNotFound, InvalidConfig
+from oci.iot.models import (
+    DigitalTwinAdapterInboundEnvelope,
+    DigitalTwinAdapterInboundRoute,
+    DigitalTwinAdapterJsonPayload,
+)
 
 from oracle.oci_iot_mcp_server import server
 
@@ -37,6 +42,29 @@ def _response(*, status: int = 202, request_id: str = "req-123", headers: dict |
 
 def _simple_model(identifier: str, **kwargs):
     return SimpleNamespace(id=identifier, **kwargs)
+
+
+def _fake_upstream_adapter_envelope():
+    return DigitalTwinAdapterInboundEnvelope(
+        reference_endpoint="/telemetry",
+        reference_payload=DigitalTwinAdapterJsonPayload(data_format="JSON"),
+        envelope_mapping={"type": "messageType"},
+    )
+
+
+def _fake_upstream_adapter_route():
+    return DigitalTwinAdapterInboundRoute(
+        condition="true",
+        payload_mapping={"temperature": "temp"},
+    )
+
+
+def _fake_upstream_adapter():
+    return SimpleNamespace(
+        id="ocid1.digitaltwinadapter.oc1..ffff",
+        inbound_envelope=_fake_upstream_adapter_envelope(),
+        inbound_routes=[_fake_upstream_adapter_route()],
+    )
 
 
 def test_tool_decorator_registers_tool_and_returns_original_function(monkeypatch):
@@ -205,6 +233,27 @@ def test_get_identity_client_uses_resource_principal_tenancy(monkeypatch):
     assert tenancy_id == "ocid1.tenancy.oc1..dddd"
     assert client["signer"] is signer
     assert client["config"]["region"] == "us-chicago-1"
+
+
+def test_create_digital_twin_adapter_serializes_nested_adapter(monkeypatch):
+    def fake_create(**kwargs):
+        return SimpleNamespace(data=_fake_upstream_adapter())
+
+    monkeypatch.setattr(
+        server,
+        "get_iot_client",
+        lambda: SimpleNamespace(create_digital_twin_adapter=fake_create),
+    )
+
+    result = server.create_digital_twin_adapter(
+        iot_domain_id="domain-1",
+        display_name="Adapter 1",
+        digital_twin_model_id="model-1",
+    )
+
+    assert isinstance(result["inbound_envelope"], dict)
+    assert isinstance(result["inbound_routes"], list)
+    server.JSON_ADAPTER.dump_python(result, mode="json")
 
 
 def test_get_identity_client_uses_instance_principal_delegation_tenancy(monkeypatch):
@@ -516,7 +565,12 @@ def test_get_digital_twin_instance_content_metadata_path_calls_client(monkeypatc
 
     def get_content(**kwargs):
         captured.update(kwargs)
-        return SimpleNamespace(data={"content": "ok", "metadata": {"x": 1}})
+        return SimpleNamespace(
+            data={
+                "content": {"temperature": 73},
+                "metadata": {"x": 1, "status": "ok"},
+            }
+        )
 
     monkeypatch.setattr(server, "get_iot_client", lambda: SimpleNamespace(get_digital_twin_instance_content=get_content))
 
@@ -526,11 +580,18 @@ def test_get_digital_twin_instance_content_metadata_path_calls_client(monkeypatc
         opc_request_id="opc-1",
     )
 
-    assert result == {"content": "ok", "metadata": {"x": 1}}
+    assert result == {
+        "content": {"temperature": 73},
+        "metadata": {"x": 1, "status": "ok"},
+    }
     assert captured == {
         "digital_twin_instance_id": "twin-1",
         "should_include_metadata": True,
         "opc_request_id": "opc-1",
+    }
+    assert server.JSON_ADAPTER.dump_python(result, mode="json") == {
+        "content": {"temperature": 73},
+        "metadata": {"x": 1, "status": "ok"},
     }
 
 

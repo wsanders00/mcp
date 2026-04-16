@@ -257,8 +257,8 @@ def _as_tool_result(payload):
     if isinstance(payload, dict) and payload.get("ok") is False:
         return payload
     if isinstance(payload, dict) and payload.get("ok") is True and "data" in payload:
-        return JSON_ADAPTER.dump_python(payload, mode="json")
-    return success_result(JSON_ADAPTER.dump_python(payload, mode="json"))
+        return JSON_ADAPTER.dump_python(payload, mode="json", fallback=oci.util.to_dict)
+    return success_result(JSON_ADAPTER.dump_python(payload, mode="json", fallback=oci.util.to_dict))
 
 
 def _limit_error(*, field_name: str, value: int):

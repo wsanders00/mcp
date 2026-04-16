@@ -1,6 +1,35 @@
 import pytest
 
+from oci.iot.models import (
+    DigitalTwinAdapterInboundEnvelope,
+    DigitalTwinAdapterInboundRoute,
+    DigitalTwinAdapterJsonPayload,
+)
+
 from oracle.oci_iot_mcp_server import server
+
+
+def _fake_agent_envelope():
+    return DigitalTwinAdapterInboundEnvelope(
+        reference_endpoint="/telemetry",
+        reference_payload=DigitalTwinAdapterJsonPayload(data_format="JSON"),
+        envelope_mapping={"type": "messageType"},
+    )
+
+
+def _fake_agent_route():
+    return DigitalTwinAdapterInboundRoute(
+        condition="true",
+        payload_mapping={"temperature": "temp"},
+    )
+
+
+def _fake_agent_adapter():
+    return {
+        "id": "ocid1.digitaltwinadapter.oc1..aaaa",
+        "inbound_envelope": _fake_agent_envelope(),
+        "inbound_routes": [_fake_agent_route()],
+    }
 
 
 def test_server_get_twin_platform_context_returns_success_envelope(monkeypatch):
@@ -21,6 +50,23 @@ def test_server_get_twin_platform_context_returns_success_envelope(monkeypatch):
 
     assert payload["ok"] is True
     assert payload["data"]["twin"]["id"] == "twin-1"
+
+
+def test_server_get_twin_platform_context_serializes_nested_adapter(monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "get_twin_platform_context_impl",
+        lambda **_: {
+            "twin": {"id": "twin-1"},
+            "adapter": _fake_agent_adapter(),
+        },
+        raising=False,
+    )
+
+    payload = server.get_twin_platform_context(digital_twin_instance_id="twin-1")
+
+    assert payload["ok"] is True
+    assert payload["data"]["adapter"]["id"] == "ocid1.digitaltwinadapter.oc1..aaaa"
 
 
 def test_server_get_latest_twin_state_returns_success_envelope(monkeypatch):

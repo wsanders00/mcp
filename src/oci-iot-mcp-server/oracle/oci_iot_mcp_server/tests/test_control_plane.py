@@ -2,6 +2,11 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
+from oci.iot.models import (
+    DigitalTwinAdapterInboundEnvelope,
+    DigitalTwinAdapterInboundRoute,
+    DigitalTwinAdapterJsonPayload,
+)
 
 import oracle.oci_iot_mcp_server.control_plane as control_plane
 from oracle.oci_iot_mcp_server import server
@@ -37,6 +42,21 @@ from oracle.oci_iot_mcp_server.control_plane import (
     map_work_request_error,
     map_work_request_log,
 )
+
+
+def _fake_adapter_envelope():
+    return DigitalTwinAdapterInboundEnvelope(
+        reference_endpoint="/telemetry",
+        reference_payload=DigitalTwinAdapterJsonPayload(data_format="JSON"),
+        envelope_mapping={"type": "messageType"},
+    )
+
+
+def _fake_adapter_route():
+    return DigitalTwinAdapterInboundRoute(
+        condition="true",
+        payload_mapping={"temperature": "temp"},
+    )
 
 
 def test_map_iot_domain_includes_device_host_and_identity_domain_host():
@@ -96,6 +116,27 @@ def test_map_digital_twin_adapter_includes_model_spec_and_routes():
     assert result["digital_twin_model_id"] == "ocid1.digitaltwinmodel.oc1..aaaa"
     assert result["digital_twin_model_spec_uri"] == "https://example.com/spec.json"
     assert result["inbound_routes"] == [{"messageType": "telemetry"}]
+
+
+def _build_fake_adapter():
+    return SimpleNamespace(
+        id="ocid1.digitaltwinadapter.oc1..bbbb",
+        display_name="nested-adapter",
+        digital_twin_model_id="ocid1.digitaltwinmodel.oc1..bbbb",
+        digital_twin_model_spec_uri="https://example.com/spec-nested.json",
+        inbound_envelope=_fake_adapter_envelope(),
+        inbound_routes=[_fake_adapter_route()],
+    )
+
+
+def test_map_digital_twin_adapter_normalizes_nested_oci_objects():
+    adapter = _build_fake_adapter()
+
+    result = map_digital_twin_adapter(adapter)
+
+    assert isinstance(result["inbound_envelope"], dict)
+    assert isinstance(result["inbound_routes"], list)
+    server.JSON_ADAPTER.dump_python(result, mode="json")
 
 
 def test_server_get_iot_domain_delegates_to_control_plane(monkeypatch):
@@ -214,6 +255,44 @@ def test_content_and_spec_wrappers_return_raw_response_data(monkeypatch):
 
     assert get_digital_twin_instance_content_record("twin-1") == {"content": "value"}
     assert get_digital_twin_model_spec_record("model-1") == {"spec": "value"}
+
+
+def test_content_and_spec_wrappers_return_json_safe_dict_response_data(monkeypatch):
+    class FakeClient:
+        def get_digital_twin_instance_content(self, **kwargs):
+            assert kwargs == {"digital_twin_instance_id": "twin-1"}
+            return SimpleNamespace(
+                data={
+                    "content": {"temperature": 73},
+                    "metadata": {"status": "ok"},
+                }
+            )
+
+        def get_digital_twin_model_spec(self, **kwargs):
+            assert kwargs == {"digital_twin_model_id": "model-1"}
+            return SimpleNamespace(
+                data={
+                    "contents": [
+                        {
+                            "@id": "dtmi:example:Pump;1",
+                            "@type": "Interface",
+                        }
+                    ]
+                }
+            )
+
+    monkeypatch.setattr(control_plane, "get_iot_client", lambda: FakeClient())
+
+    content = get_digital_twin_instance_content_record("twin-1")
+    spec = get_digital_twin_model_spec_record("model-1")
+
+    assert server.JSON_ADAPTER.dump_python(content, mode="json") == {
+        "content": {"temperature": 73},
+        "metadata": {"status": "ok"},
+    }
+    assert server.JSON_ADAPTER.dump_python(spec, mode="json") == {
+        "contents": [{"@id": "dtmi:example:Pump;1", "@type": "Interface"}]
+    }
 
 
 @pytest.mark.parametrize(

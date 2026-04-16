@@ -2,9 +2,39 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from oci.iot.models import (
+    DigitalTwinAdapterInboundEnvelope,
+    DigitalTwinAdapterInboundRoute,
+    DigitalTwinAdapterJsonPayload,
+)
+
 from oracle.oci_iot_mcp_server import server
 from oracle.oci_iot_mcp_server.errors import error_result
 from oracle.oci_iot_mcp_server.tool_models import DataApiTokenModel
+
+
+def _fake_phase1_adapter_envelope():
+    return DigitalTwinAdapterInboundEnvelope(
+        reference_endpoint="/telemetry",
+        reference_payload=DigitalTwinAdapterJsonPayload(data_format="JSON"),
+        envelope_mapping={"type": "messageType"},
+    )
+
+
+def _fake_phase1_adapter_route():
+    return DigitalTwinAdapterInboundRoute(
+        condition="true",
+        payload_mapping={"temperature": "temp"},
+    )
+
+
+def _fake_phase1_adapter_payload():
+    return {
+        "id": "ocid1.digitaltwinadapter.oc1..eeee",
+        "digital_twin_model_id": "ocid1.digitaltwinmodel.oc1..bbbb",
+        "inbound_envelope": _fake_phase1_adapter_envelope(),
+        "inbound_routes": [_fake_phase1_adapter_route()],
+    }
 
 
 def test_get_digital_twin_adapter_full_wraps_full_adapter_record(monkeypatch):
@@ -23,6 +53,21 @@ def test_get_digital_twin_adapter_full_wraps_full_adapter_record(monkeypatch):
 
     assert result["ok"] is True
     assert result["data"]["digital_twin_model_id"] == "ocid1.digitaltwinmodel.oc1..aaaa"
+
+
+def test_get_digital_twin_adapter_full_serializes_nested_adapter(monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "get_digital_twin_adapter_record",
+        lambda *_: _fake_phase1_adapter_payload(),
+    )
+
+    result = server.get_digital_twin_adapter_full("ocid1.digitaltwinadapter.oc1..eeee")
+
+    assert result["ok"] is True
+    assert result["data"]["id"] == "ocid1.digitaltwinadapter.oc1..eeee"
+    assert isinstance(result["data"]["inbound_envelope"], dict)
+    server.JSON_ADAPTER.dump_python(result, mode="json")
 
 
 def test_derive_domain_context_returns_success_envelope(monkeypatch):
