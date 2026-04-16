@@ -30,21 +30,6 @@ htmlcov/
 # Maven
 **/target/
 
-# misc
-mcphost*.json
-/ai/
-/.worktrees/
-
-# Re-include specific test assets that may be hidden by broad global ignore rules.
-!src/oci-iot-mcp-server/oracle/oci_iot_mcp_server/tests/
-!src/oci-iot-mcp-server/oracle/oci_iot_mcp_server/tests/test_agent_workflows.py
-!src/oci-iot-mcp-server/oracle/oci_iot_mcp_server/tests/test_server_agent_tools.py
-!tests/
-!tests/e2e/
-!tests/e2e/features/
-!tests/e2e/features/steps/
-!tests/e2e/features/steps/oci-iot-mcp-server-steps.py
-
 # GoldenGate MCP local runtime artifacts
 **/logs/
 **/oracle-goldengate-mcp-server.env
