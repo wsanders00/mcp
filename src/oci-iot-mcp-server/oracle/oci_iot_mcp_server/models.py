@@ -4,6 +4,7 @@ Licensed under the Universal Permissive License v1.0 as shown at
 https://oss.oracle.com/licenses/upl.
 """
 
+import oci
 from datetime import datetime
 from typing import Any, Optional
 
@@ -28,6 +29,10 @@ def _freeform_tags(model: Any) -> dict[str, Any] | None:
 
 def _defined_tags(model: Any) -> dict[str, dict[str, Any]] | None:
     return getattr(model, "defined_tags", None)
+
+
+def _normalize_nested_oci_value(value: Any) -> Any:
+    return oci.util.to_dict(value)
 
 
 class DigitalTwinAdapterModel(BaseModel):
@@ -62,8 +67,8 @@ class DigitalTwinAdapterModel(BaseModel):
             last_updated=_last_updated(model),
             digital_twin_model_id=getattr(model, "digital_twin_model_id", None),
             digital_twin_model_spec_uri=getattr(model, "digital_twin_model_spec_uri", None),
-            inbound_envelope=getattr(model, "inbound_envelope", None),
-            inbound_routes=getattr(model, "inbound_routes", None),
+            inbound_envelope=_normalize_nested_oci_value(getattr(model, "inbound_envelope", None)),
+            inbound_routes=_normalize_nested_oci_value(getattr(model, "inbound_routes", None)),
             freeform_tags=_freeform_tags(model),
             defined_tags=_defined_tags(model),
         )

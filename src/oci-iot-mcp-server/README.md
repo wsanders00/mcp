@@ -86,8 +86,50 @@ uv run oracle.oci-iot-mcp-server
 
 ## Configuration
 
-The server uses the OCI configuration profile specified by the `OCI_CONFIG_PROFILE` environment variable.
-If not set, it defaults to `DEFAULT`.
+The server supports multiple OCI SDK authentication modes through `OCI_IOT_AUTH_TYPE`.
+
+Supported values:
+
+- `auto`
+- `security_token`
+- `api_key`
+- `instance_principal`
+- `resource_principal`
+- `instance_principal_delegation`
+- `resource_principal_delegation`
+- `oke_workload_identity`
+
+If `OCI_IOT_AUTH_TYPE` is not set, the server defaults to `auto`.
+
+`auto` uses the OCI configuration profile specified by `OCI_CONFIG_PROFILE` and behaves as follows:
+
+1. If the selected profile has a usable `security_token_file`, the server uses session-token auth.
+2. Otherwise, it falls back to standard API-key auth from the same profile.
+
+`OCI_CONFIG_PROFILE` still applies to `auto`, `security_token`, and `api_key`. If not set, it defaults to
+`DEFAULT`.
+
+`instance_principal` is intended for code running on OCI compute instances with instance principal access.
+
+`resource_principal` is intended for OCI runtime environments that expose resource principal credentials.
+
+`instance_principal_delegation` and `resource_principal_delegation` require
+`OCI_IOT_DELEGATION_TOKEN`.
+
+`oke_workload_identity` is intended for OKE workload identity environments. You can optionally override the
+service account token source with either:
+
+- `OCI_IOT_OKE_SERVICE_ACCOUNT_TOKEN`
+- `OCI_IOT_OKE_SERVICE_ACCOUNT_TOKEN_PATH`
+
+If both are set, `OCI_IOT_OKE_SERVICE_ACCOUNT_TOKEN` takes precedence.
+
+Identity-scoped paths that need an explicit tenancy OCID, such as `list_compartments`, may also require:
+
+- `OCI_IOT_TENANCY_ID_OVERRIDE`
+
+`auto` still only covers profile-backed security-token and API-key flows. It does not auto-detect
+delegation-token or OKE workload-identity auth.
 
 For the direct OCI IoT Data API tools, you can also provide a bearer token through the
 `OCI_IOT_DATA_API_ACCESS_TOKEN` environment variable.
