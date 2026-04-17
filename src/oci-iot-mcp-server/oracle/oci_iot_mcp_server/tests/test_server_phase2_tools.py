@@ -152,6 +152,44 @@ def test_invoke_raw_command_and_wait_impl_returns_invalid_input_for_value_error(
     assert result["error"]["code"] == "invalid_input"
 
 
+def test_invoke_raw_command_and_wait_impl_passes_through_invoke_error_payload(monkeypatch):
+    token = DataApiTokenModel.model_validate(
+        {
+            "access_token": "token-123",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "expires_at": "2026-03-26T13:00:00Z",
+        }
+    )
+    monkeypatch.setattr(
+        server,
+        "_resolve_twin_with_data_plane_access",
+        lambda **kwargs: ({"id": "twin-1"}, {"data_host": "data.example.com", "domain_short_id": "abc123"}, token),
+    )
+    monkeypatch.setattr(
+        server,
+        "invoke_raw_command",
+        lambda **kwargs: {
+            "ok": False,
+            "error": {
+                "code": "invalid_input",
+                "message": "bad payload",
+                "details": {},
+            },
+        },
+    )
+
+    result = server.invoke_raw_command_and_wait_impl(
+        digital_twin_instance_id="twin-1",
+        request_endpoint="/v1/cmd",
+        request_data_format="TEXT",
+        request_data="PING",
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "invalid_input"
+
+
 def test_invoke_raw_command_and_wait_impl_returns_control_plane_error(monkeypatch):
     token = DataApiTokenModel.model_validate(
         {

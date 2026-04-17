@@ -11,10 +11,9 @@ import time
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Annotated, Any, Optional
-from urllib.error import HTTPError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
+import httpx
 import oci
 from fastmcp import FastMCP
 from oci.exceptions import ConfigFileNotFound, InvalidConfig
@@ -49,12 +48,13 @@ from .control_plane import (
     list_work_requests_records,
 )
 from .data_plane import (
+    DataApiTokenError,
     build_ords_base_url,
+    get_cached_data_api_token,
     get_raw_command_record,
     list_raw_command_records,
     list_rejected_data_records,
     list_snapshot_records,
-    mint_data_api_token,
     require_token_credentials,
 )
 from .domain_context import resolve_domain_context_for_tool
@@ -70,6 +70,7 @@ logger.setLevel(logging.INFO)
 # Create FastMCP instance
 mcp = FastMCP(name=__project__)
 JSON_ADAPTER = TypeAdapter(Any)
+IOT_DATA_API_TIMEOUT_SECONDS = 30.0
 
 
 def tool(*, description: str):
@@ -208,7 +209,14 @@ def _call_iot_data_api(
     access_token: Optional[str] = None,
     opc_request_id: Optional[str] = None,
 ):
-    token = _get_iot_data_api_access_token(access_token)
+    try:
+        token = _get_iot_data_api_access_token(access_token)
+    except ValueError:
+        return error_result(
+            code="missing_access_token",
+            message="IoT Data API access token is required.",
+            retry_hint="Pass access_token or set OCI_IOT_DATA_API_ACCESS_TOKEN, then retry.",
+        )
     url = _build_iot_data_api_url(
         iot_domain_group_short_id=iot_domain_group_short_id,
         iot_domain_short_id=iot_domain_short_id,
@@ -227,18 +235,48 @@ def _call_iot_data_api(
     if opc_request_id is not None:
         headers["opc-request-id"] = opc_request_id
 
-    request = Request(url, headers=headers, method="GET")
     try:
-        with urlopen(request) as response:
-            payload = response.read().decode("utf-8")
-            content_type = response.headers.get("Content-Type", "")
-            if "application/json" in content_type:
-                return json.loads(payload)
-            return payload
-    except HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="replace")
-        logger.error(f"IoT Data API request failed for {url}: {exc.code} {error_body}")
-        raise RuntimeError(f"IoT Data API request failed with status {exc.code}: {error_body}") from exc
+        response = httpx.get(
+            url,
+            headers=headers,
+            timeout=IOT_DATA_API_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        content_type = response.headers.get("Content-Type", "")
+        if "application/json" in content_type:
+            return response.json()
+        return response.text
+    except httpx.TimeoutException as exc:
+        logger.error(f"IoT Data API request timed out for {url}: {exc}")
+        return error_result(
+            code="data_plane_timeout",
+            message="IoT Data API request timed out.",
+            retry_hint="Retry the request. If it persists, verify Data API connectivity and region settings.",
+            details={"url": url},
+        )
+    except httpx.HTTPStatusError as exc:
+        response = exc.response
+        error_body = response.text
+        logger.error(f"IoT Data API request failed for {url}: {response.status_code} {error_body}")
+        return error_result(
+            code="data_plane_http_error",
+            message=f"IoT Data API request failed with status {response.status_code}.",
+            retry_hint="Verify the token, domain short IDs, and request parameters, then retry.",
+            details={
+                "url": str(exc.request.url),
+                "status_code": response.status_code,
+                "response_body": error_body,
+            },
+        )
+    except httpx.RequestError as exc:
+        request_url = str(exc.request.url) if exc.request is not None else url
+        logger.error(f"IoT Data API request failed for {request_url}: {exc}")
+        return error_result(
+            code="data_plane_request_error",
+            message="IoT Data API request failed before receiving a response.",
+            retry_hint="Verify Data API connectivity, DNS, and TLS settings, then retry.",
+            details={"url": request_url, "reason": str(exc)},
+        )
 
 
 def _delegate(message: str, func, *args, **kwargs):
@@ -308,10 +346,17 @@ def _resolve_data_plane_access(**selectors):
         return credentials
 
     try:
-        token = mint_data_api_token(
+        token = get_cached_data_api_token(
             domain_context=domain_context,
             env=os.environ,
             now=lambda: datetime.now(UTC),
+        )
+    except DataApiTokenError as exc:
+        return error_result(
+            code=exc.code,
+            message=str(exc),
+            retry_hint=exc.retry_hint,
+            details=exc.details,
         )
     except Exception as exc:
         return error_result(
@@ -577,6 +622,8 @@ def invoke_raw_command_and_wait_impl(
             request_duration=request_duration,
             response_duration=response_duration,
         )
+        if _is_error(invoke_metadata):
+            return invoke_metadata
     except ValueError as exc:
         return invalid_input_error(
             resource_type="raw_command",
@@ -2177,6 +2224,17 @@ def invoke_raw_command(
 
         response = get_iot_client().invoke_raw_command(**kwargs)
         return _response_to_dict(response)
+    except ValueError as exc:
+        return invalid_input_error(
+            resource_type="raw_command",
+            message=str(exc),
+            input_payload={
+                "digital_twin_instance_id": digital_twin_instance_id,
+                "request_endpoint": request_endpoint,
+                "request_data_format": request_data_format,
+            },
+            retry_hint="Retry with valid raw command inputs for the selected format.",
+        )
     except Exception as e:
         logger.error(f"Error invoking raw command for digital twin instance {digital_twin_instance_id}: {e}")
         raise

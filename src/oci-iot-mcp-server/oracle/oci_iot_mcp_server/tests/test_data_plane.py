@@ -1,10 +1,15 @@
 from datetime import UTC, datetime
 
+import pytest
+
 import oracle.oci_iot_mcp_server.data_plane as data_plane
 from oracle.oci_iot_mcp_server.data_plane import (
+    DataApiTokenError,
     build_ords_base_url,
     build_twin_filter,
+    clear_data_api_token_cache,
     encode_q,
+    get_cached_data_api_token,
     list_collection_records,
     mint_data_api_token,
     require_token_credentials,
@@ -68,6 +73,124 @@ def test_mint_data_api_token_uses_password_grant_and_scope(monkeypatch):
     assert encode_q(build_twin_filter("ocid1.digitaltwininstance.oc1..aaaa")) == (
         '{"$and":[{"digital_twin_instance_id":"ocid1.digitaltwininstance.oc1..aaaa"}]}'
     )
+
+
+def test_mint_data_api_token_requires_identity_domain_host():
+    with pytest.raises(DataApiTokenError) as excinfo:
+        mint_data_api_token(
+            domain_context={
+                "domain_short_id": "abc123",
+                "domain_group_short_id": "xyz987",
+            },
+            env={
+                "OCI_IOT_ORDS_CLIENT_ID": "client-id",
+                "OCI_IOT_ORDS_CLIENT_SECRET": "client-secret",
+                "OCI_IOT_ORDS_USERNAME": "iot.user@example.com",
+                "OCI_IOT_ORDS_PASSWORD": "secret-password",
+            },
+            now=lambda: datetime(2026, 3, 26, 12, 0, 0, tzinfo=UTC),
+        )
+
+    assert excinfo.value.code == "missing_ords_configuration"
+    assert excinfo.value.details["missing"] == ["db_allowed_identity_domain_host"]
+
+
+def test_get_cached_data_api_token_reuses_unexpired_token(monkeypatch):
+    clear_data_api_token_cache()
+    observed = {"calls": 0}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            observed["calls"] += 1
+            return {
+                "access_token": f"token-{observed['calls']}",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+            }
+
+    monkeypatch.setattr(data_plane.httpx, "post", lambda *args, **kwargs: FakeResponse())
+
+    context = {
+        "domain_short_id": "abc123",
+        "domain_group_short_id": "xyz987",
+        "db_allowed_identity_domain_host": "id.example.com",
+    }
+    env = {
+        "OCI_IOT_ORDS_CLIENT_ID": "client-id",
+        "OCI_IOT_ORDS_CLIENT_SECRET": "client-secret",
+        "OCI_IOT_ORDS_USERNAME": "iot.user@example.com",
+        "OCI_IOT_ORDS_PASSWORD": "secret-password",
+    }
+
+    try:
+        token1 = get_cached_data_api_token(
+            domain_context=context,
+            env=env,
+            now=lambda: datetime(2026, 3, 26, 12, 0, 0, tzinfo=UTC),
+        )
+        token2 = get_cached_data_api_token(
+            domain_context=context,
+            env=env,
+            now=lambda: datetime(2026, 3, 26, 12, 5, 0, tzinfo=UTC),
+        )
+    finally:
+        clear_data_api_token_cache()
+
+    assert token1.access_token == "token-1"
+    assert token2.access_token == "token-1"
+    assert observed["calls"] == 1
+
+
+def test_get_cached_data_api_token_refreshes_after_expiry(monkeypatch):
+    clear_data_api_token_cache()
+    observed = {"calls": 0}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            observed["calls"] += 1
+            return {
+                "access_token": f"token-{observed['calls']}",
+                "token_type": "Bearer",
+                "expires_in": 60,
+            }
+
+    monkeypatch.setattr(data_plane.httpx, "post", lambda *args, **kwargs: FakeResponse())
+
+    context = {
+        "domain_short_id": "abc123",
+        "domain_group_short_id": "xyz987",
+        "db_allowed_identity_domain_host": "id.example.com",
+    }
+    env = {
+        "OCI_IOT_ORDS_CLIENT_ID": "client-id",
+        "OCI_IOT_ORDS_CLIENT_SECRET": "client-secret",
+        "OCI_IOT_ORDS_USERNAME": "iot.user@example.com",
+        "OCI_IOT_ORDS_PASSWORD": "secret-password",
+    }
+
+    try:
+        token1 = get_cached_data_api_token(
+            domain_context=context,
+            env=env,
+            now=lambda: datetime(2026, 3, 26, 12, 0, 0, tzinfo=UTC),
+        )
+        token2 = get_cached_data_api_token(
+            domain_context=context,
+            env=env,
+            now=lambda: datetime(2026, 3, 26, 12, 1, 1, tzinfo=UTC),
+        )
+    finally:
+        clear_data_api_token_cache()
+
+    assert token1.access_token == "token-1"
+    assert token2.access_token == "token-2"
+    assert observed["calls"] == 2
 
 
 def test_require_token_credentials_returns_structured_error_for_missing_env():

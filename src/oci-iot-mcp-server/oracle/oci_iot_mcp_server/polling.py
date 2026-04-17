@@ -49,7 +49,14 @@ def wait_for_snapshot_update(
     while monotonic() < deadline:
         rows = fetch_rows()
         for row in rows:
-            if _parse_rfc3339(row["time_observed"]) > observed_after:
+            observed_at = row.get("time_observed")
+            if not observed_at:
+                continue
+            try:
+                observed_time = _parse_rfc3339(observed_at)
+            except (TypeError, ValueError):
+                continue
+            if observed_time > observed_after:
                 return row
         sleep(2)
 

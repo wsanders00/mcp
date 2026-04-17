@@ -128,3 +128,37 @@ def test_wait_for_snapshot_update_times_out_when_no_rows_are_newer():
 
     assert result == {"timed_out": True}
     assert sleeps == [2]
+
+
+def test_wait_for_snapshot_update_skips_rows_missing_time_observed():
+    rows = iter(
+        [
+            [
+                {
+                    "digital_twin_instance_id": "ocid1.digitaltwininstance.oc1..aaaa",
+                    "content_path": "temperature",
+                    "value": 71,
+                }
+            ],
+            [
+                {
+                    "digital_twin_instance_id": "ocid1.digitaltwininstance.oc1..aaaa",
+                    "content_path": "temperature",
+                    "value": 72,
+                    "time_observed": "2026-03-26T12:00:05Z",
+                }
+            ],
+        ]
+    )
+    ticks = iter([0.0, 0.2, 0.4, 2.1])
+
+    result = wait_for_snapshot_update(
+        fetch_rows=lambda: next(rows),
+        since="2026-03-26T12:00:00Z",
+        timeout_seconds=2,
+        sleep=lambda _: None,
+        monotonic=lambda: next(ticks),
+    )
+
+    assert result["content_path"] == "temperature"
+    assert result["value"] == 72

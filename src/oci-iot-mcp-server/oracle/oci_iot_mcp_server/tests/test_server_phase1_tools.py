@@ -9,6 +9,7 @@ from oci.iot.models import (
 )
 
 from oracle.oci_iot_mcp_server import server
+from oracle.oci_iot_mcp_server.data_plane import DataApiTokenError
 from oracle.oci_iot_mcp_server.errors import error_result
 from oracle.oci_iot_mcp_server.tool_models import DataApiTokenModel
 
@@ -338,12 +339,35 @@ def test_resolve_data_plane_access_passes_through_missing_credentials(monkeypatc
 def test_resolve_data_plane_access_returns_error_when_token_minting_fails(monkeypatch):
     monkeypatch.setattr(server, "resolve_domain_context_for_tool", lambda **kwargs: {"iot_domain_id": "domain-ocid"})
     monkeypatch.setattr(server, "require_token_credentials", lambda env: {"ok": True, "data": {}})
-    monkeypatch.setattr(server, "mint_data_api_token", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("bad token")))
+    monkeypatch.setattr(server, "get_cached_data_api_token", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("bad token")))
 
     result = server._resolve_data_plane_access(iot_domain_id="domain-ocid")
 
     assert result["ok"] is False
     assert result["error"]["code"] == "data_plane_error"
+
+
+def test_resolve_data_plane_access_returns_structured_token_mint_error(monkeypatch):
+    monkeypatch.setattr(server, "resolve_domain_context_for_tool", lambda **kwargs: {"iot_domain_id": "domain-ocid"})
+    monkeypatch.setattr(server, "require_token_credentials", lambda env: {"ok": True, "data": {}})
+    monkeypatch.setattr(
+        server,
+        "get_cached_data_api_token",
+        lambda **kwargs: (_ for _ in ()).throw(
+            DataApiTokenError(
+                code="missing_ords_configuration",
+                message="IoT domain is not configured for ORDS token minting.",
+                retry_hint="Configure ORDS data access for the IoT domain and retry.",
+                details={"missing": ["db_allowed_identity_domain_host"]},
+            )
+        ),
+    )
+
+    result = server._resolve_data_plane_access(iot_domain_id="domain-ocid")
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "missing_ords_configuration"
+    assert result["error"]["details"]["missing"] == ["db_allowed_identity_domain_host"]
 
 
 def test_resolve_data_plane_access_returns_domain_context_and_token(monkeypatch):
@@ -359,7 +383,7 @@ def test_resolve_data_plane_access_returns_domain_context_and_token(monkeypatch)
         lambda **kwargs: {"iot_domain_id": "domain-ocid", "domain_short_id": "abc123"},
     )
     monkeypatch.setattr(server, "require_token_credentials", lambda env: {"ok": True, "data": {}})
-    monkeypatch.setattr(server, "mint_data_api_token", lambda **kwargs: token)
+    monkeypatch.setattr(server, "get_cached_data_api_token", lambda **kwargs: token)
 
     result = server._resolve_data_plane_access(iot_domain_id="domain-ocid")
 
