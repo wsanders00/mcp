@@ -166,10 +166,15 @@ For ORDS-backed operator tools, set:
 ## Friendly Identifier Rules
 
 - `digital_twin_instance_id` and `iot_domain_id` work directly.
-- Twin display-name lookup requires an IoT domain selector.
-- Domain display-name lookup and `domain_short_id` lookup require `compartment_id`.
-- Ambiguous friendly matches fail with `ambiguous_identifier` and list candidate identifiers so the
-  caller can prompt for a retry with a specific choice.
+- Domain display-name lookup and `domain_short_id` lookup require `compartment_id` so the server
+  can scope the control-plane search before returning a short identifier.
+- Twin display-name lookup requires the IoT domain selector to resolve first; the twin lookup never
+  runs without an identified domain context.
+- Ambiguous friendly matches fail with `ambiguous_identifier` and list candidate identifiers so
+  the caller can prompt for a retry with a specific choice.
+- Short IDs are derived from the control-plane resources instead of being memorized; helpers such as
+  `get_data_api_token` and `derive_domain_context` can surface those identifiers once the related
+  domain context is resolved.
 
 ## ORDS Credentials And Token Behavior
 
@@ -182,12 +187,22 @@ For ORDS-backed operator tools, set:
   `invoke_raw_command_and_wait`, `get_raw_command_by_request_id`, `list_recent_raw_commands_for_twin`,
   `list_recent_rejected_data_for_twin`, and `wait_for_twin_update` resolve ORDS access automatically
   from the provided domain and twin selectors.
+- When the ORDS credentials (`OCI_IOT_ORDS_CLIENT_ID`, `OCI_IOT_ORDS_CLIENT_SECRET`, `OCI_IOT_ORDS_USERNAME`,
+  and `OCI_IOT_ORDS_PASSWORD`) are configured, `get_data_api_token`, `get_latest_twin_state`, and
+  `validate_twin_readiness` can mint tokens on the caller’s behalf without an explicit bearer token
+  input. Callers can still supply a pre-minted token via `access_token` if they prefer to reuse it.
+- `list_recent_raw_commands_for_twin` and `list_recent_rejected_data_for_twin` enforce a `limit` in the
+  range `1` to `100`; values outside that range result in validation failures.
+- `wait_for_twin_update` always requires the `since` argument and the value must be a valid RFC 3339
+  timestamp so the helper can poll after the specified cursor.
 
 ## IoT Data API Notes
 
 - These tools target the **OCI Internet of Things Platform Data API**, not the older Oracle Internet of
   Things Cloud Service product.
 - Direct Data API tools require `iot_domain_group_short_id` and `iot_domain_short_id`.
+- Direct list/get raw, snapshot, historized, rejected, and rawCommand helpers also require an
+  `access_token` parameter unless the `OCI_IOT_DATA_API_ACCESS_TOKEN` environment variable is set.
 - The Data API also requires a bearer token. Pass it with the `access_token` parameter or set
   `OCI_IOT_DATA_API_ACCESS_TOKEN`.
 - If `region` is omitted, the tools default to the region in the configured OCI profile.

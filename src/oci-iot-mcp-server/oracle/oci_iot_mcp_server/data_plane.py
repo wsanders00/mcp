@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 from datetime import timedelta
 
@@ -8,6 +9,49 @@ from .errors import error_result
 from .tool_models import DataApiTokenModel, success_result
 
 ORDS_API_DATE = "20250531"
+_DATA_API_TOKEN_CACHE: dict[tuple[str, ...], DataApiTokenModel] = {}
+
+
+class DataApiTokenError(RuntimeError):
+    def __init__(self, *, code: str, message: str, retry_hint: str | None = None, details: dict | None = None):
+        super().__init__(message)
+        self.code = code
+        self.retry_hint = retry_hint
+        self.details = details or {}
+
+
+def _data_api_token_cache_key(*, domain_context: dict, env: dict) -> tuple[str, ...]:
+    secret_fingerprint = hashlib.sha256(
+        f"{env['OCI_IOT_ORDS_CLIENT_SECRET']}:{env['OCI_IOT_ORDS_PASSWORD']}".encode()
+    ).hexdigest()
+    return (
+        domain_context["domain_group_short_id"],
+        domain_context["domain_short_id"],
+        domain_context.get("db_allowed_identity_domain_host") or "",
+        env["OCI_IOT_ORDS_CLIENT_ID"],
+        env["OCI_IOT_ORDS_USERNAME"],
+        secret_fingerprint,
+    )
+
+
+def clear_data_api_token_cache() -> None:
+    _DATA_API_TOKEN_CACHE.clear()
+
+
+def get_cached_data_api_token(*, domain_context: dict, env: dict, now) -> DataApiTokenModel:
+    current_time = now()
+    cache_key = _data_api_token_cache_key(domain_context=domain_context, env=env)
+    cached_token = _DATA_API_TOKEN_CACHE.get(cache_key)
+    if cached_token is not None and cached_token.expires_at > current_time:
+        return cached_token
+
+    token = mint_data_api_token(
+        domain_context=domain_context,
+        env=env,
+        now=lambda: current_time,
+    )
+    _DATA_API_TOKEN_CACHE[cache_key] = token
+    return token
 
 
 def build_ords_base_url(domain_context: dict) -> str:
@@ -42,6 +86,15 @@ def require_token_credentials(env: dict) -> dict:
 
 
 def mint_data_api_token(*, domain_context: dict, env: dict, now) -> DataApiTokenModel:
+    identity_domain_host = domain_context.get("db_allowed_identity_domain_host")
+    if not identity_domain_host:
+        raise DataApiTokenError(
+            code="missing_ords_configuration",
+            message="IoT domain is not configured for ORDS token minting.",
+            retry_hint="Configure ORDS data access for the IoT domain and retry.",
+            details={"missing": ["db_allowed_identity_domain_host"]},
+        )
+
     scope = (
         f"/{domain_context['domain_group_short_id']}/iot/"
         f"{domain_context['domain_short_id']}"
@@ -50,31 +103,57 @@ def mint_data_api_token(*, domain_context: dict, env: dict, now) -> DataApiToken
         f"{env['OCI_IOT_ORDS_CLIENT_ID']}:{env['OCI_IOT_ORDS_CLIENT_SECRET']}".encode()
     ).decode()
 
-    response = httpx.post(
-        f"https://{domain_context['db_allowed_identity_domain_host']}/oauth2/v1/token",
-        headers={
-            "Authorization": f"Basic {auth}",
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-        data={
-            "grant_type": "password",
-            "username": env["OCI_IOT_ORDS_USERNAME"],
-            "password": env["OCI_IOT_ORDS_PASSWORD"],
-            "scope": scope,
-        },
-        timeout=30.0,
-    )
-    raise_for_status = getattr(response, "raise_for_status", None)
-    if callable(raise_for_status):
-        raise_for_status()
+    try:
+        response = httpx.post(
+            f"https://{identity_domain_host}/oauth2/v1/token",
+            headers={
+                "Authorization": f"Basic {auth}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            data={
+                "grant_type": "password",
+                "username": env["OCI_IOT_ORDS_USERNAME"],
+                "password": env["OCI_IOT_ORDS_PASSWORD"],
+                "scope": scope,
+            },
+            timeout=30.0,
+        )
+        raise_for_status = getattr(response, "raise_for_status", None)
+        if callable(raise_for_status):
+            raise_for_status()
+        payload = response.json()
+        access_token = payload["access_token"]
+        token_type = payload["token_type"]
+        expires_in = payload["expires_in"]
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code if exc.response is not None else None
+        raise DataApiTokenError(
+            code="data_plane_error",
+            message="Failed to mint an IoT Data API bearer token.",
+            retry_hint="Verify the ORDS credentials and domain access, then retry.",
+            details={"status_code": status_code},
+        ) from exc
+    except httpx.RequestError as exc:
+        raise DataApiTokenError(
+            code="data_plane_error",
+            message="Failed to mint an IoT Data API bearer token.",
+            retry_hint="Verify the ORDS credentials and domain access, then retry.",
+            details={"reason": str(exc)},
+        ) from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise DataApiTokenError(
+            code="data_plane_error",
+            message="IoT Data API token endpoint returned an invalid response.",
+            retry_hint="Verify the ORDS credentials and domain access, then retry.",
+            details={"reason": str(exc)},
+        ) from exc
 
-    payload = response.json()
     minted_at = now()
     return DataApiTokenModel(
-        access_token=payload["access_token"],
-        token_type=payload["token_type"],
-        expires_in=payload["expires_in"],
-        expires_at=minted_at + timedelta(seconds=payload["expires_in"]),
+        access_token=access_token,
+        token_type=token_type,
+        expires_in=expires_in,
+        expires_at=minted_at + timedelta(seconds=expires_in),
     )
 
 

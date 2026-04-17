@@ -8,14 +8,16 @@ from .control_plane import (
     get_iot_domain_record,
 )
 from .data_plane import (
+    DataApiTokenError,
     build_ords_base_url,
+    get_cached_data_api_token,
     list_historized_records,
     list_raw_command_records,
     list_rejected_data_records,
     list_snapshot_records,
-    mint_data_api_token,
     require_token_credentials,
 )
+from .errors import error_result
 from .domain_context import derive_domain_context
 from .resolvers import resolve_twin_for_tool
 
@@ -99,11 +101,26 @@ def resolve_twin_bundle_with_token(
     if _is_error(credentials):
         return credentials
 
-    token = mint_data_api_token(
-        domain_context=bundle["domain_context"],
-        env=os.environ,
-        now=lambda: datetime.now(UTC),
-    )
+    try:
+        token = get_cached_data_api_token(
+            domain_context=bundle["domain_context"],
+            env=os.environ,
+            now=lambda: datetime.now(UTC),
+        )
+    except DataApiTokenError as exc:
+        return error_result(
+            code=exc.code,
+            message=str(exc),
+            retry_hint=exc.retry_hint,
+            details=exc.details,
+        )
+    except Exception as exc:
+        return error_result(
+            code="data_plane_error",
+            message="Failed to mint an IoT Data API bearer token.",
+            retry_hint="Verify the ORDS credentials and domain access, then retry.",
+            details={"reason": str(exc)},
+        )
     return bundle, token
 
 

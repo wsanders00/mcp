@@ -2,6 +2,7 @@ import importlib
 
 import pytest
 
+from oracle.oci_iot_mcp_server.data_plane import DataApiTokenError
 from oracle.oci_iot_mcp_server.tool_models import DataApiTokenModel
 
 
@@ -292,7 +293,7 @@ def test_resolve_twin_bundle_with_token_returns_bundle_and_token(monkeypatch):
         "require_token_credentials",
         lambda _env: {"ok": True, "data": {"present": [], "missing": []}},
     )
-    monkeypatch.setattr(agent_workflows, "mint_data_api_token", lambda **_: token)
+    monkeypatch.setattr(agent_workflows, "get_cached_data_api_token", lambda **_: token)
 
     bundle, resolved_token = agent_workflows.resolve_twin_bundle_with_token(
         digital_twin_instance_id="twin-1"
@@ -300,6 +301,41 @@ def test_resolve_twin_bundle_with_token_returns_bundle_and_token(monkeypatch):
 
     assert bundle["twin"]["id"] == "twin-1"
     assert resolved_token.access_token == "token-123"
+
+
+def test_resolve_twin_bundle_with_token_returns_structured_token_mint_error(monkeypatch):
+    agent_workflows = load_agent_workflows()
+
+    monkeypatch.setattr(
+        agent_workflows,
+        "resolve_twin_bundle",
+        lambda **_: {
+            "twin": {"id": "twin-1"},
+            "domain_context": {"domain_short_id": "factory-a"},
+        },
+    )
+    monkeypatch.setattr(
+        agent_workflows,
+        "require_token_credentials",
+        lambda _env: {"ok": True, "data": {"present": [], "missing": []}},
+    )
+    monkeypatch.setattr(
+        agent_workflows,
+        "get_cached_data_api_token",
+        lambda **_: (_ for _ in ()).throw(
+            DataApiTokenError(
+                code="missing_ords_configuration",
+                message="IoT domain is not configured for ORDS token minting.",
+                retry_hint="Configure ORDS data access for the IoT domain and retry.",
+                details={"missing": ["db_allowed_identity_domain_host"]},
+            )
+        ),
+    )
+
+    payload = agent_workflows.resolve_twin_bundle_with_token(digital_twin_instance_id="twin-1")
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "missing_ords_configuration"
 
 
 def test_validate_twin_readiness_returns_resolution_error(monkeypatch):

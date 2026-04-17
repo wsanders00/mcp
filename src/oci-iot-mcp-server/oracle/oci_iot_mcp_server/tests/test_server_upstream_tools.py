@@ -1,8 +1,8 @@
 import builtins
 import io
 from types import SimpleNamespace
-from urllib.error import HTTPError
 
+import httpx
 import pytest
 from oci.exceptions import ConfigFileNotFound, InvalidConfig
 from oci.iot.models import (
@@ -12,21 +12,6 @@ from oci.iot.models import (
 )
 
 from oracle.oci_iot_mcp_server import server
-
-
-class FakeUrlResponse:
-    def __init__(self, payload: str, *, headers: dict[str, str] | None = None):
-        self._payload = payload.encode("utf-8")
-        self.headers = headers or {"Content-Type": "application/json"}
-
-    def read(self):
-        return self._payload
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        return False
 
 
 def _detail_factory(kind: str):
@@ -455,7 +440,7 @@ def test_build_iot_data_api_url_uses_oke_region_default(monkeypatch):
     )
 
 
-def test_call_iot_data_api_handles_json_text_and_http_errors(monkeypatch):
+def test_call_iot_data_api_handles_json_text_and_structured_errors(monkeypatch):
     captured = {}
     monkeypatch.setattr(server, "_get_iot_data_api_access_token", lambda access_token=None: "token-123")
     monkeypatch.setattr(
@@ -464,12 +449,18 @@ def test_call_iot_data_api_handles_json_text_and_http_errors(monkeypatch):
         lambda **kwargs: "https://example.com/ords/domain-short/rawData",
     )
 
-    def fake_urlopen(request):
-        captured["url"] = request.full_url
-        captured["headers"] = {key.lower(): value for key, value in request.header_items()}
-        return FakeUrlResponse('{"items": [1]}')
+    def fake_get(url, *, headers, timeout):
+        captured["url"] = url
+        captured["headers"] = {key.lower(): value for key, value in headers.items()}
+        captured["timeout"] = timeout
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            json={"items": [1]},
+            request=httpx.Request("GET", url),
+        )
 
-    monkeypatch.setattr(server, "urlopen", fake_urlopen)
+    monkeypatch.setattr(server.httpx, "get", fake_get)
 
     result = server._call_iot_data_api(
         resource_path="/rawData",
@@ -484,11 +475,17 @@ def test_call_iot_data_api_handles_json_text_and_http_errors(monkeypatch):
     assert captured["headers"]["authorization"] == "Bearer token-123"
     assert captured["headers"]["accept"] == "application/json"
     assert captured["headers"]["opc-request-id"] == "opc-1"
+    assert captured["timeout"] == 30.0
 
     monkeypatch.setattr(
-        server,
-        "urlopen",
-        lambda request: FakeUrlResponse("plain text", headers={"Content-Type": "text/plain"}),
+        server.httpx,
+        "get",
+        lambda url, *, headers, timeout: httpx.Response(
+            200,
+            headers={"Content-Type": "text/plain"},
+            text="plain text",
+            request=httpx.Request("GET", url),
+        ),
     )
     assert server._call_iot_data_api(
         resource_path="/rawData",
@@ -498,22 +495,58 @@ def test_call_iot_data_api_handles_json_text_and_http_errors(monkeypatch):
 
     logged = []
     monkeypatch.setattr(server.logger, "error", lambda message: logged.append(message))
-    http_error = HTTPError(
-        "https://example.com",
+    request = httpx.Request("GET", "https://example.com/ords/domain-short/rawData")
+    response = httpx.Response(
         500,
-        "boom",
-        hdrs={},
-        fp=io.BytesIO(b'{"message":"bad"}'),
+        headers={"Content-Type": "application/json"},
+        json={"message": "bad"},
+        request=request,
     )
-    monkeypatch.setattr(server, "urlopen", lambda request: (_ for _ in ()).throw(http_error))
+    monkeypatch.setattr(
+        server.httpx,
+        "get",
+        lambda url, *, headers, timeout: (_ for _ in ()).throw(
+            httpx.HTTPStatusError("boom", request=request, response=response)
+        ),
+    )
 
-    with pytest.raises(RuntimeError, match="status 500"):
-        server._call_iot_data_api(
-            resource_path="/rawData",
-            iot_domain_group_short_id="group-short",
-            iot_domain_short_id="domain-short",
-        )
+    result = server._call_iot_data_api(
+        resource_path="/rawData",
+        iot_domain_group_short_id="group-short",
+        iot_domain_short_id="domain-short",
+    )
+    assert result["ok"] is False
+    assert result["error"]["code"] == "data_plane_http_error"
+    assert result["error"]["details"]["status_code"] == 500
     assert logged and "IoT Data API request failed" in logged[0]
+
+    monkeypatch.setattr(
+        server.httpx,
+        "get",
+        lambda url, *, headers, timeout: (_ for _ in ()).throw(httpx.TimeoutException("slow")),
+    )
+    result = server._call_iot_data_api(
+        resource_path="/rawData",
+        iot_domain_group_short_id="group-short",
+        iot_domain_short_id="domain-short",
+    )
+    assert result["ok"] is False
+    assert result["error"]["code"] == "data_plane_timeout"
+
+    monkeypatch.setattr(
+        server.httpx,
+        "get",
+        lambda url, *, headers, timeout: (_ for _ in ()).throw(
+            httpx.RequestError("network down", request=httpx.Request("GET", url))
+        ),
+    )
+    result = server._call_iot_data_api(
+        resource_path="/rawData",
+        iot_domain_group_short_id="group-short",
+        iot_domain_short_id="domain-short",
+    )
+    assert result["ok"] is False
+    assert result["error"]["code"] == "data_plane_request_error"
 
 
 @pytest.mark.parametrize(
@@ -1279,6 +1312,17 @@ def test_invoke_raw_command_builds_details_through_helper_and_returns_response_m
     assert captured["opc_request_id"] == "req-1"
 
 
+def test_invoke_raw_command_returns_invalid_input_error_for_unknown_format(monkeypatch):
+    result = server.invoke_raw_command(
+        digital_twin_instance_id="twin-1",
+        request_endpoint="/v1/cmd",
+        request_data_format="XML",
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "invalid_input"
+
+
 def test_list_compartments_includes_root_and_deduplicates_results(monkeypatch):
     root = _simple_model(
         "tenancy-1",
@@ -1456,3 +1500,15 @@ def test_direct_data_api_tools_delegate_to_call_helper(monkeypatch, tool_name, c
     assert captured["opc_request_id"] == "req-1"
     if "query_params" in call_kwargs:
         assert captured["query_params"] == {"limit": 5}
+
+
+def test_direct_data_api_tool_returns_missing_access_token_error(monkeypatch):
+    monkeypatch.delenv("OCI_IOT_DATA_API_ACCESS_TOKEN", raising=False)
+
+    result = server.list_raw_data(
+        iot_domain_group_short_id="group-short",
+        iot_domain_short_id="domain-short",
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "missing_access_token"
