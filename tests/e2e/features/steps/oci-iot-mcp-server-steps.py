@@ -7,8 +7,28 @@ https://oss.oracle.com/licenses/upl.
 import importlib
 
 from behave import given, then, when
+from oci.iot.models import (
+    DigitalTwinAdapterInboundEnvelope,
+    DigitalTwinAdapterInboundRoute,
+    DigitalTwinAdapterJsonPayload,
+)
 
 from oracle.oci_iot_mcp_server.tool_models import success_result
+
+
+def _fake_platform_context_envelope():
+    return DigitalTwinAdapterInboundEnvelope(
+        reference_endpoint="/telemetry",
+        reference_payload=DigitalTwinAdapterJsonPayload(data_format="JSON"),
+        envelope_mapping={"type": "messageType"},
+    )
+
+
+def _fake_platform_context_route():
+    return DigitalTwinAdapterInboundRoute(
+        condition="true",
+        payload_mapping={"temperature": "temp"},
+    )
 
 
 def _platform_context_payload():
@@ -33,6 +53,8 @@ def _platform_context_payload():
         "adapter": {
             "id": "ocid1.digitaltwinadapter.oc1..mock-adapter",
             "name": "pump-adapter",
+            "inbound_envelope": _fake_platform_context_envelope(),
+            "inbound_routes": [_fake_platform_context_route()],
         },
         "model": {"id": "ocid1.digitaltwinmodel.oc1..mock-model", "name": "pump-model"},
     }
