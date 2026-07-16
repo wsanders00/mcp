@@ -10,7 +10,7 @@ import os
 import time
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Literal, Optional
 from urllib.parse import urlencode
 
 import httpx
@@ -1853,7 +1853,12 @@ def update_digital_twin_adapter(
 
 
 @tool(
-    description="Updates a specific digital twin instance by its identifier."
+    description=(
+        "Updates a specific digital twin instance by its identifier. In-place migration is supported only for a "
+        "compatible additive next minor model through an upgraded adapter that references that model. After updating, "
+        "perform a fresh instance read and a fresh content read to verify the migration. Major or incompatible changes "
+        "require a new instance."
+    )
 )
 def update_digital_twin_instance(
     digital_twin_instance_id: Annotated[str, "The digital twin instance identifier"],
@@ -1869,7 +1874,8 @@ def update_digital_twin_instance(
     description: Annotated[Optional[str], "A short description of the digital twin instance"] = None,
     digital_twin_adapter_id: Annotated[
         Optional[str],
-        "The digital twin adapter OCID associated with the instance",
+        "The upgraded adapter OCID associated with the instance when migrating to a compatible additive next minor "
+        "model; the adapter must reference that model",
     ] = None,
     digital_twin_model_id: Annotated[
         Optional[str],
@@ -2077,7 +2083,11 @@ def create_iot_domain(
 )
 def create_iot_domain_group(
     compartment_id: Annotated[str, "The compartment identifier where the IoT domain group will be created"],
-    type: Annotated[Optional[str], "The IoT domain group type, such as STANDARD or LIGHTWEIGHT"] = None,
+    type: Annotated[
+        Optional[Literal["PRODUCTION", "DEVELOPMENT", "STANDARD", "LIGHTWEIGHT"]],
+        "IoT domain group type. Use DEVELOPMENT for development/test or PRODUCTION for production; STANDARD and "
+        "LIGHTWEIGHT are deprecated aliases scheduled for removal.",
+    ] = None,
     display_name: Annotated[Optional[str], "A user-friendly display name for the IoT domain group"] = None,
     description: Annotated[Optional[str], "A short description of the IoT domain group"] = None,
     freeform_tags: Annotated[Optional[dict[str, str] | str], "Free-form tags as an object or JSON string"] = None,
@@ -2445,7 +2455,10 @@ def update_iot_domain_group(
 
 
 @tool(
-    description="Deletes a specific IoT domain by its identifier."
+    description=(
+        "Deletes a specific IoT domain by its identifier. IoT domains with active digital twin resources cannot be "
+        "deleted; list and remove relationships, instances, adapters, and models before retrying."
+    )
 )
 def delete_iot_domain(
     iot_domain_id: Annotated[str, "The IoT domain identifier"],

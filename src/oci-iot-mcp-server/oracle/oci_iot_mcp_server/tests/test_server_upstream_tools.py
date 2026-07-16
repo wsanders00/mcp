@@ -15,6 +15,11 @@ from oci.iot.models import (
 from oracle.oci_iot_mcp_server import server
 
 
+EXPECTED_ADDITIONAL_USER_AGENT = (
+    f"{server.__project__.split('oracle.', 1)[1].split('-server', 1)[0]}/{server.__version__}"
+)
+
+
 def _detail_factory(kind: str):
     def factory(**kwargs):
         return SimpleNamespace(kind=kind, **kwargs)
@@ -70,6 +75,68 @@ def test_tool_decorator_registers_tool_and_returns_original_function(monkeypatch
 
     assert sample_tool() == "ok"
     assert registered == [("sample description", "sample_tool")]
+
+
+@pytest.mark.asyncio
+async def test_create_iot_domain_group_exposes_current_and_legacy_types():
+    domain_group_tool = await server.mcp.get_tool("create_iot_domain_group")
+    type_schema = domain_group_tool.parameters["properties"]["type"]
+    enum_values = {
+        value
+        for option in type_schema["anyOf"]
+        for value in option.get("enum", [])
+    }
+    type_description = type_schema["description"]
+    assert enum_values == {"DEVELOPMENT", "PRODUCTION", "STANDARD", "LIGHTWEIGHT"}
+    assert "Use DEVELOPMENT" in type_description
+    assert "PRODUCTION for production" in type_description
+    assert "STANDARD and LIGHTWEIGHT are deprecated aliases" in type_description
+
+
+@pytest.mark.asyncio
+async def test_delete_iot_domain_explains_active_resource_constraint():
+    delete_domain_tool = await server.mcp.get_tool("delete_iot_domain")
+    delete_description = delete_domain_tool.description.lower()
+    assert "active digital twin resources" in delete_description
+    assert "cannot be deleted" in delete_description
+
+
+@pytest.mark.asyncio
+async def test_update_digital_twin_instance_explains_minor_model_migration():
+    update_twin_tool = await server.mcp.get_tool("update_digital_twin_instance")
+    update_description = update_twin_tool.description.lower()
+    adapter_description = update_twin_tool.parameters["properties"]["digital_twin_adapter_id"]["description"].lower()
+    assert "compatible additive next minor model" in update_description
+    assert "upgraded adapter" in update_description
+    assert "fresh content read" in update_description
+    assert "compatible additive next minor model" in adapter_description
+
+
+def test_create_iot_domain_group_accepts_legacy_standard_alias(monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(
+        server.oci.iot.models,
+        "CreateIotDomainGroupDetails",
+        lambda **kwargs: SimpleNamespace(**kwargs),
+    )
+
+    def create_iot_domain_group(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(data=_simple_model("group-legacy"))
+
+    monkeypatch.setattr(
+        server,
+        "get_iot_client",
+        lambda: SimpleNamespace(create_iot_domain_group=create_iot_domain_group),
+    )
+
+    server.create_iot_domain_group(
+        compartment_id="compartment-1",
+        type="STANDARD",
+    )
+
+    assert captured["create_iot_domain_group_details"].type == "STANDARD"
 
 
 def test_json_and_response_helpers_cover_normalization_and_error_paths(monkeypatch):
@@ -131,7 +198,7 @@ def test_get_identity_client_for_profile_builds_security_token_client(monkeypatc
 
     assert tenancy_id == "ocid1.tenancy.oc1..aaaa"
     assert client["signer"] == {"token": "token-123", "private_key": "key:/tmp/key.pem"}
-    assert client["config"]["additional_user_agent"].endswith(f"/{server.__version__}")
+    assert client["config"]["additional_user_agent"] == EXPECTED_ADDITIONAL_USER_AGENT
 
 
 def test_get_identity_client_uses_api_key_fallback_when_security_token_missing(monkeypatch):
@@ -164,7 +231,7 @@ def test_get_identity_client_uses_api_key_fallback_when_security_token_missing(m
 
     assert tenancy_id == "ocid1.tenancy.oc1..bbbb"
     assert client["signer"]["kind"] == "api_key"
-    assert client["config"]["additional_user_agent"].endswith(f"/{server.__version__}")
+    assert client["config"]["additional_user_agent"] == EXPECTED_ADDITIONAL_USER_AGENT
 
 
 def test_get_identity_client_uses_instance_principal_tenancy(monkeypatch):
@@ -219,6 +286,78 @@ def test_get_identity_client_uses_resource_principal_tenancy(monkeypatch):
     assert tenancy_id == "ocid1.tenancy.oc1..dddd"
     assert client["signer"] is signer
     assert client["config"]["region"] == "us-chicago-1"
+
+
+@pytest.mark.parametrize(
+    "auth_type",
+    [
+        "api_key",
+        "instance_principal",
+        "resource_principal",
+        "instance_principal_delegation",
+        "resource_principal_delegation",
+        "oke_workload_identity",
+    ],
+)
+def test_identity_client_paths_use_exact_additional_user_agent(monkeypatch, auth_type):
+    server._get_identity_client_for_profile.cache_clear()
+    signer = SimpleNamespace(
+        kind=auth_type,
+        tenancy_id="ocid1.tenancy.oc1..principal",
+        region="us-ashburn-1",
+    )
+    captured_config = {}
+
+    monkeypatch.setenv("OCI_IOT_DELEGATION_TOKEN", "delegation-token")
+    monkeypatch.setenv("OCI_IOT_TENANCY_ID_OVERRIDE", "ocid1.tenancy.oc1..override")
+    monkeypatch.setattr(
+        server.oci.config,
+        "from_file",
+        lambda profile_name: {
+            "profile": profile_name,
+            "key_file": "/tmp/api-key.pem",
+            "tenancy": "ocid1.tenancy.oc1..profile",
+            "user": "ocid1.user.oc1..profile",
+            "fingerprint": "aa:bb",
+            "region": "us-ashburn-1",
+        },
+    )
+    monkeypatch.setattr(server.oci.signer, "Signer", lambda **kwargs: signer)
+    monkeypatch.setattr(
+        server.oci.auth.signers,
+        "InstancePrincipalsSecurityTokenSigner",
+        lambda: signer,
+    )
+    monkeypatch.setattr(
+        server.oci.auth.signers,
+        "get_resource_principals_signer",
+        lambda: signer,
+    )
+    monkeypatch.setattr(
+        server.oci.auth.signers,
+        "InstancePrincipalsDelegationTokenSigner",
+        lambda **kwargs: signer,
+    )
+    monkeypatch.setattr(
+        server.oci.auth.signers,
+        "get_resource_principal_delegation_token_signer",
+        lambda **kwargs: signer,
+    )
+    monkeypatch.setattr(
+        server.oci.auth.signers,
+        "get_oke_workload_identity_resource_principal_signer",
+        lambda **kwargs: signer,
+    )
+
+    def identity_client(config, signer=None):
+        captured_config.update(config)
+        return {"config": config, "signer": signer}
+
+    monkeypatch.setattr(server.oci.identity, "IdentityClient", identity_client)
+
+    server._get_identity_client_for_profile("ALT", auth_type)
+
+    assert captured_config["additional_user_agent"] == EXPECTED_ADDITIONAL_USER_AGENT
 
 
 def test_create_digital_twin_adapter_serializes_nested_adapter(monkeypatch):
@@ -923,7 +1062,7 @@ MODEL_TOOL_CASES = [
         "details_arg": "create_iot_domain_group_details",
         "call_kwargs": {
             "compartment_id": "compartment-1",
-            "type": "STANDARD",
+            "type": "DEVELOPMENT",
             "display_name": "Group 1",
             "description": "desc",
             "freeform_tags": '{"env": "dev"}',
@@ -933,7 +1072,7 @@ MODEL_TOOL_CASES = [
         },
         "expected_details": {
             "compartment_id": "compartment-1",
-            "type": "STANDARD",
+            "type": "DEVELOPMENT",
             "display_name": "Group 1",
             "description": "desc",
             "freeform_tags": {"env": "dev"},
