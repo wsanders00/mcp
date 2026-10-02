@@ -12,6 +12,10 @@
 - Use `oracle-mcp-common` for OCI credential resolution, retaining IoT's existing eight authentication modes and deprecated `OCI_IOT_*` aliases. Canonical `OCI_MCP_*` settings take precedence, and conflicting inline/path delegation or OKE token inputs now fail closed.
 - Document current and legacy IoT domain group types, the active digital-twin restriction on IoT domain deletion, and the compatible additive minor-model upgrade workflow. Model downgrades are unsupported.
 
+### Added
+
+- Add read-only Flow Runtime tools for one bounded list page, full SDK runtime metadata, and the complete SDK-decoded flow document with its own ETag. Return explicit success/error envelopes and selected response metadata; document sensitive output and managed-editor evidence boundaries.
+
 ### Security
 
 - Require PyJWT 2.15.1 or newer and urllib3 2.8.0 or newer to address published security advisories. The PyJWT shared-options advisory has no patched release listed; upgrading does not establish that it is resolved.

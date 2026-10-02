@@ -95,6 +95,9 @@ credentials or a live OCI service.
 | invoke_raw_command_and_wait | Invokes a raw command on a digital twin instance and waits for a terminal data-plane result |
 | get_iot_domain | Retrieves a specific IoT domain by its identifier |
 | get_iot_domain_group | Retrieves a specific IoT domain group by its identifier |
+| list_iot_flow_runtimes_page | Lists one bounded SDK page of Flow Runtimes with pagination and request metadata |
+| get_iot_flow_runtime | Retrieves full SDK Flow Runtime metadata and its response ETag |
+| get_iot_flow_runtime_flows | Retrieves the complete SDK-decoded flow document and its own response ETag; may contain sensitive configuration |
 | get_work_request | Retrieves a specific work request by its identifier |
 | list_digital_twin_adapters | Lists digital twin adapters in a specified IoT domain |
 | list_digital_twin_adapters_page | Lists one SDK page of digital twin adapters and returns pagination metadata |
@@ -126,6 +129,45 @@ credentials or a live OCI service.
 | list_recent_rejected_data_for_twin | Lists recent rejected ingest records for a digital twin instance |
 | wait_for_twin_update | Waits for a twin snapshot update after a given timestamp |
 | health_check | Health check endpoint for the OCI IoT MCP server |
+
+## Flow Runtime inspection
+
+Use explicit compartment, domain, and runtime OCIDs with the existing OCI
+authentication configuration. `list_iot_flow_runtimes_page` accepts SDK filters
+including `iot_domain_id`, `id`, display name, lifecycle state, and sorting. Its
+`limit` defaults to 100 and is constrained to 1–100 by this tool. Each invocation
+fetches one SDK page; use `opc_next_page` as the next call's `page`, even when
+`items` is empty. The caller controls further pagination.
+
+These three tools return `{"ok": true, "data": {...}}` on success or
+`{"ok": false, "error": {...}}` on failure. List data includes `items`,
+`opc_next_page`, `opc_request_id`, requested `page` and `limit`, `has_more`, and
+HTTP `status`. Detail data contains `runtime`; flows data contains `flows`.
+Both GET tools include their own `etag`, `opc_request_id`, and HTTP `status`.
+A missing ETag is `null`. The flows ETag comes from the flows GET, independently
+of the runtime metadata ETag or any Node-RED revision value.
+
+`get_iot_flow_runtime_flows` returns the entire SDK-decoded document, retaining
+tabs, configuration nodes, unknown fields, and embedded strings. It preserves
+decoded content, rather than original response bytes, and returns an error if
+complete JSON serialization cannot be delivered. Protect this result: flow JSON
+can contain sensitive configuration and endpoints. The server does not log or
+persist the document. See Oracle's
+[flow retrieval documentation](https://docs.oracle.com/en-us/iaas/Content/internet-of-things/get-iot-flow-runtime-flows.htm).
+
+Graph interpretation belongs to the calling skill. Runtime metadata and flow
+node types do not establish the installed palette, module versions, node help,
+or field/output/authentication contracts; inspect the managed editor for that
+evidence. A retrieved document may omit secrets and does not prove that
+credential-backed nodes can be restored. See Oracle's
+[managed editor and backup guidance](https://docs.oracle.com/en-us/iaas/Content/internet-of-things/node-red.htm).
+
+The caller needs `inspect` access to `iot-flow-runtime` for listing, and `read`
+access for runtime and flow GETs. These cover `IOT_FLOW_RUNTIME_INSPECT`,
+`IOT_FLOW_RUNTIME_READ`, and `IOT_FLOW_RUNTIME_FLOWS_READ`, respectively; see
+[IoT IAM permissions](https://docs.oracle.com/en-us/iaas/Content/Identity/policyreference/iot-policy-reference.htm).
+An OCI `NotAuthorizedOrNotFound` error retains that ambiguity. The tools do not
+broaden discovery or change IAM after a denied read.
 
 ## Configuration
 

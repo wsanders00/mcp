@@ -21,6 +21,8 @@ from oracle.oci_iot_mcp_server.control_plane import (
     get_digital_twin_relationship_record,
     get_iot_domain_group_record,
     get_iot_domain_record,
+    get_iot_flow_runtime_flows_record,
+    get_iot_flow_runtime_record,
     get_work_request_record,
     invoke_raw_command,
     list_digital_twin_adapters_records,
@@ -29,6 +31,7 @@ from oracle.oci_iot_mcp_server.control_plane import (
     list_digital_twin_relationships_records,
     list_iot_domain_groups_records,
     list_iot_domains_records,
+    list_iot_flow_runtimes_page_record,
     list_work_request_errors_records,
     list_work_request_logs_records,
     list_work_requests_records,
@@ -345,6 +348,225 @@ def test_content_and_spec_wrappers_return_json_safe_dict_response_data(monkeypat
     assert server.JSON_ADAPTER.dump_python(spec, mode="json") == {
         "contents": [{"@id": "dtmi:example:Pump;1", "@type": "Interface"}]
     }
+
+
+def test_list_iot_flow_runtimes_page_forwards_filters_and_preserves_page_metadata(monkeypatch):
+    calls = []
+
+    class FakeClient:
+        def list_iot_flow_runtimes(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                data=oci.iot.models.IotFlowRuntimeCollection(
+                    items=[oci.iot.models.IotFlowRuntimeSummary(
+                        id="runtime-1", display_name="managed", compartment_id="compartment-1",
+                        iot_domain_id="domain-1", scale="MEDIUM",
+                    )]
+                ),
+                headers={"OpC-NeXt-PaGe": "next-token", "OPC-REQUEST-ID": "header-req"},
+                status=200,
+                request_id=None,
+            )
+
+    monkeypatch.setattr(control_plane, "get_iot_client", lambda: FakeClient())
+    result = list_iot_flow_runtimes_page_record(
+        compartment_id="compartment-1",
+        iot_domain_id="domain-1",
+        id="runtime-1",
+        display_name="managed",
+        lifecycle_state="ACTIVE",
+        page="page-1",
+        limit=20,
+        sort_order="ASC",
+        sort_by="displayName",
+        opc_request_id="client-req",
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["items"][0]["id"] == "runtime-1"
+    assert result["data"]["items"][0]["compartment_id"] == "compartment-1"
+    assert result["data"]["items"][0]["iot_domain_id"] == "domain-1"
+    assert result["data"]["items"][0]["scale"] == "MEDIUM"
+    assert {key: value for key, value in result["data"].items() if key != "items"} == {
+        "opc_next_page": "next-token",
+        "opc_request_id": "header-req",
+        "page": "page-1",
+        "limit": 20,
+        "has_more": True,
+        "status": 200,
+    }
+    assert calls == [{
+        "compartment_id": "compartment-1", "iot_domain_id": "domain-1",
+        "id": "runtime-1", "display_name": "managed", "lifecycle_state": "ACTIVE",
+        "page": "page-1", "limit": 20, "sort_order": "ASC", "sort_by": "displayName",
+        "opc_request_id": "client-req",
+    }]
+
+
+@pytest.mark.parametrize("limit", [0, 101, True, 1.5])
+def test_list_iot_flow_runtimes_rejects_invalid_limit_before_client(monkeypatch, limit):
+    monkeypatch.setattr(control_plane, "get_iot_client", lambda: pytest.fail("SDK called"))
+    result = list_iot_flow_runtimes_page_record(compartment_id="compartment-1", limit=limit)
+    assert result["ok"] is False
+    assert result["error"]["code"] == "invalid_input"
+
+
+def test_list_iot_flow_runtimes_preserves_empty_page_with_next_token_and_default_limit(monkeypatch):
+    class FakeClient:
+        def list_iot_flow_runtimes(self, **kwargs):
+            assert kwargs == {"compartment_id": "compartment-1", "limit": 100}
+            return SimpleNamespace(data=[], headers={"opc-next-page": "next"}, status=200)
+
+    monkeypatch.setattr(control_plane, "get_iot_client", lambda: FakeClient())
+    result = list_iot_flow_runtimes_page_record(compartment_id="compartment-1")
+    assert result["ok"] is True
+    assert result["data"]["items"] == []
+    assert result["data"]["opc_next_page"] == "next"
+    assert result["data"]["has_more"] is True
+    assert result["data"]["limit"] == 100
+
+
+def test_list_iot_flow_runtimes_preserves_empty_page_without_next_token(monkeypatch):
+    class FakeClient:
+        def list_iot_flow_runtimes(self, **kwargs):
+            return SimpleNamespace(data=[], headers={}, status=200)
+
+    monkeypatch.setattr(control_plane, "get_iot_client", lambda: FakeClient())
+    result = list_iot_flow_runtimes_page_record(compartment_id="compartment-1")
+    assert result["ok"] is True
+    assert result["data"]["items"] == []
+    assert result["data"]["opc_next_page"] is None
+    assert result["data"]["has_more"] is False
+
+
+def test_flow_runtime_reads_serialize_runtime_and_preserve_decoded_flows_etags(monkeypatch):
+    calls = []
+    flow_document = {
+        "flows": [
+            {"id": "tab-1", "type": "tab"},
+            {"id": "tab-2", "type": "tab"},
+            {"id": "cfg", "type": "config"},
+        ],
+        "unknown": {"nested": True},
+        "embedded": '{"keep":"as string"}',
+    }
+
+    class FakeClient:
+        def get_iot_flow_runtime(self, **kwargs):
+            calls.append(("runtime", kwargs))
+            return SimpleNamespace(
+                data=oci.iot.models.IotFlowRuntime(
+                    id="runtime-1", scale="HIGH", flow_runtime_host="runtime.example.test",
+                    compartment_id="compartment-1", iot_domain_id="domain-1",
+                    network_config=oci.iot.models.NetworkConfigDetails(
+                        subnet_id="subnet-1", network_security_group_ids=["nsg-1"]
+                    ),
+                    time_created=datetime(2026, 1, 1, tzinfo=UTC)
+                ),
+                headers={"ETag": "runtime-tag", "OpC-ReQuEsT-Id": "req-1"}, status=200,
+            )
+
+        def get_iot_flow_runtime_flows(self, **kwargs):
+            calls.append(("flows", kwargs))
+            return SimpleNamespace(data=flow_document, headers={"eTaG": "flows-tag"}, status=200)
+
+    monkeypatch.setattr(control_plane, "get_iot_client", lambda: FakeClient())
+    runtime = get_iot_flow_runtime_record(iot_flow_runtime_id="runtime-1", opc_request_id="client-req")
+    flows = get_iot_flow_runtime_flows_record(iot_flow_runtime_id="runtime-1")
+
+    assert runtime["data"]["runtime"]["id"] == "runtime-1"
+    assert runtime["data"]["runtime"]["time_created"].startswith("2026-01-01")
+    assert runtime["data"]["runtime"]["scale"] == "HIGH"
+    assert runtime["data"]["runtime"]["network_config"]["network_security_group_ids"] == ["nsg-1"]
+    assert runtime["data"]["etag"] == "runtime-tag"
+    assert runtime["data"]["opc_request_id"] == "req-1"
+    assert flows["data"]["flows"] == flow_document
+    assert flows["data"]["etag"] == "flows-tag"
+    assert flows["data"]["opc_request_id"] is None
+    assert calls == [
+        ("runtime", {"iot_flow_runtime_id": "runtime-1", "opc_request_id": "client-req"}),
+        ("flows", {"iot_flow_runtime_id": "runtime-1"}),
+    ]
+
+
+def test_flow_runtime_flows_accepts_empty_document_and_missing_etag(monkeypatch):
+    class FakeClient:
+        def get_iot_flow_runtime_flows(self, **kwargs):
+            return SimpleNamespace(data={}, headers={}, status=200)
+
+    monkeypatch.setattr(control_plane, "get_iot_client", lambda: FakeClient())
+    result = get_iot_flow_runtime_flows_record(iot_flow_runtime_id="runtime-1")
+    assert result["ok"] is True
+    assert result["data"]["flows"] == {}
+    assert result["data"]["etag"] is None
+
+
+@pytest.mark.parametrize(
+    ("method", "call", "status", "code"),
+    [
+        ("list_iot_flow_runtimes", lambda: list_iot_flow_runtimes_page_record(compartment_id="c"), 401, "NotAuthenticated"),
+        ("get_iot_flow_runtime", lambda: get_iot_flow_runtime_record(iot_flow_runtime_id="r"), 403, "NotAuthorized"),
+        ("get_iot_flow_runtime_flows", lambda: get_iot_flow_runtime_flows_record(iot_flow_runtime_id="r"), 404, "NotAuthorizedOrNotFound"),
+        ("get_iot_flow_runtime", lambda: get_iot_flow_runtime_record(iot_flow_runtime_id="r"), 500, "InternalError"),
+    ],
+)
+def test_flow_runtime_service_errors_expose_only_safe_metadata(monkeypatch, caplog, method, call, status, code):
+    class FakeClient:
+        def __getattr__(self, name):
+            if name == method:
+                def fail(**kwargs):
+                    raise oci.exceptions.ServiceError(
+                        status, code, {"OpC-ReQuEsT-Id": "req-safe"}, "syntheticsecret response body"
+                    )
+                return fail
+            raise AssertionError(name)
+
+    monkeypatch.setattr(control_plane, "get_iot_client", lambda: FakeClient())
+    result = call()
+    assert result["ok"] is False
+    assert result["error"]["details"] == {
+        "status": status, "service_code": code, "opc_request_id": "req-safe"
+    }
+    assert "syntheticsecret" not in str(result)
+    assert "syntheticsecret" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: list_iot_flow_runtimes_page_record(compartment_id="c"),
+        lambda: get_iot_flow_runtime_record(iot_flow_runtime_id="r"),
+        lambda: get_iot_flow_runtime_flows_record(iot_flow_runtime_id="r"),
+    ],
+)
+def test_flow_runtime_transport_errors_do_not_expose_exception_text(monkeypatch, caplog, call):
+    class FakeClient:
+        def __getattr__(self, name):
+            def fail(**kwargs):
+                raise RuntimeError("credential-path syntheticsecret")
+            return fail
+
+    monkeypatch.setattr(control_plane, "get_iot_client", lambda: FakeClient())
+    result = call()
+    assert result["ok"] is False
+    assert "syntheticsecret" not in str(result)
+    assert "syntheticsecret" not in caplog.text
+
+
+def test_flow_runtime_flows_rejects_nonserializable_document_without_leaking(monkeypatch, caplog):
+    cyclic = {}
+    cyclic["self"] = cyclic
+
+    class FakeClient:
+        def get_iot_flow_runtime_flows(self, **kwargs):
+            return SimpleNamespace(data=cyclic, headers={}, status=200)
+
+    monkeypatch.setattr(control_plane, "get_iot_client", lambda: FakeClient())
+    result = get_iot_flow_runtime_flows_record(iot_flow_runtime_id="runtime-1")
+    assert result["ok"] is False
+    assert "Circular reference" not in str(result)
+    assert "syntheticsecret" not in str(result)
+    assert "syntheticsecret" not in caplog.text
 
 
 def test_list_digital_twin_instances_records_forwards_sdk_filters(monkeypatch):

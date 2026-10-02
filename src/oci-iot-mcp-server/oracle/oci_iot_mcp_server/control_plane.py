@@ -1,6 +1,9 @@
 import base64
+import json
 from typing import Any, Callable
 
+import oci
+from oci.exceptions import ServiceError
 from oci.iot.models import (
     InvokeRawBinaryCommandDetails,
     InvokeRawJsonCommandDetails,
@@ -8,6 +11,7 @@ from oci.iot.models import (
 )
 
 from .client import get_iot_client
+from .errors import error_result
 from .models import (
     DigitalTwinAdapterModel,
     DigitalTwinInstanceModel,
@@ -24,6 +28,41 @@ from .models import (
 MAX_RELATIONSHIP_LIST_ITEMS = 1000
 MAX_RELATIONSHIP_PAGE_SIZE = 1000
 MAX_RELATIONSHIP_PAGES = 100
+MAX_FLOW_RUNTIME_PAGE_SIZE = 100
+
+
+def _flow_runtime_error(operation: str, exc: Exception) -> dict:
+    if isinstance(exc, ServiceError):
+        details = {
+            key: value
+            for key, value in {
+                "status": getattr(exc, "status", None),
+                "service_code": getattr(exc, "code", None),
+                "opc_request_id": getattr(exc, "opc_request_id", None)
+                or getattr(exc, "request_id", None)
+                or _header_value(getattr(exc, "headers", {}) or {}, "opc-request-id"),
+            }.items()
+            if value is not None
+        }
+        return error_result(
+            code="oci_service_error",
+            message=f"OCI could not {operation}.",
+            details=details,
+        )
+    return error_result(
+        code="request_failed",
+        message=f"Unable to {operation} because of a validation, authentication, transport, response, or serialization error.",
+    )
+
+
+def _flow_runtime_metadata(response: Any) -> dict:
+    headers = getattr(response, "headers", {}) or {}
+    return {
+        "etag": _header_value(headers, "etag"),
+        "opc_request_id": getattr(response, "request_id", None)
+        or _header_value(headers, "opc-request-id"),
+        "status": getattr(response, "status", None),
+    }
 
 
 def _normalize_items(data: Any) -> list[Any]:
@@ -825,3 +864,97 @@ def invoke_raw_command(
         "status_code": getattr(response, "status", None),
         "opc_request_id": headers.get("opc-request-id"),
     }
+
+
+def list_iot_flow_runtimes_page_record(
+    *,
+    compartment_id: str,
+    iot_domain_id: str | None = None,
+    id: str | None = None,
+    display_name: str | None = None,
+    lifecycle_state: str | None = None,
+    page: str | None = None,
+    limit: int = 100,
+    sort_order: str | None = None,
+    sort_by: str | None = None,
+    opc_request_id: str | None = None,
+) -> dict:
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_FLOW_RUNTIME_PAGE_SIZE:
+        return error_result(
+            code="invalid_input",
+            message="limit must be an integer from 1 through 100.",
+        )
+    kwargs = {
+        key: value
+        for key, value in {
+            "compartment_id": compartment_id,
+            "iot_domain_id": iot_domain_id,
+            "id": id,
+            "display_name": display_name,
+            "lifecycle_state": lifecycle_state,
+            "page": page,
+            "limit": limit,
+            "sort_order": sort_order,
+            "sort_by": sort_by,
+            "opc_request_id": opc_request_id,
+        }.items()
+        if value is not None
+    }
+    try:
+        response = get_iot_client().list_iot_flow_runtimes(**kwargs)
+        headers = getattr(response, "headers", {}) or {}
+        next_page = _header_value(headers, "opc-next-page")
+        data = response.data
+        items = data if isinstance(data, (list, tuple)) else getattr(data, "items", [])
+        return {
+            "ok": True,
+            "data": {
+                "items": [oci.util.to_dict(item) for item in items or []],
+                "opc_next_page": next_page,
+                "opc_request_id": getattr(response, "request_id", None)
+                or _header_value(headers, "opc-request-id"),
+                "page": page,
+                "limit": limit,
+                "has_more": bool(next_page),
+                "status": getattr(response, "status", None),
+            },
+        }
+    except Exception as exc:
+        return _flow_runtime_error("list IoT Flow Runtimes", exc)
+
+
+def get_iot_flow_runtime_record(*, iot_flow_runtime_id: str, opc_request_id: str | None = None) -> dict:
+    try:
+        response = get_iot_client().get_iot_flow_runtime(
+            iot_flow_runtime_id=iot_flow_runtime_id,
+            **({"opc_request_id": opc_request_id} if opc_request_id is not None else {}),
+        )
+        return {
+            "ok": True,
+            "data": {
+                "runtime": oci.util.to_dict(response.data),
+                **_flow_runtime_metadata(response),
+            },
+        }
+    except Exception as exc:
+        return _flow_runtime_error("get the IoT Flow Runtime", exc)
+
+
+def get_iot_flow_runtime_flows_record(
+    *, iot_flow_runtime_id: str, opc_request_id: str | None = None
+) -> dict:
+    try:
+        response = get_iot_client().get_iot_flow_runtime_flows(
+            iot_flow_runtime_id=iot_flow_runtime_id,
+            **({"opc_request_id": opc_request_id} if opc_request_id is not None else {}),
+        )
+        flows = response.data
+        if not isinstance(flows, dict):
+            raise TypeError("Flow document was not a decoded object")
+        json.dumps(flows, allow_nan=False)
+        return {
+            "ok": True,
+            "data": {"flows": flows, **_flow_runtime_metadata(response)},
+        }
+    except Exception as exc:
+        return _flow_runtime_error("get IoT Flow Runtime flows", exc)

@@ -43,6 +43,8 @@ from .control_plane import (
     get_digital_twin_relationship_record,
     get_iot_domain_group_record,
     get_iot_domain_record,
+    get_iot_flow_runtime_flows_record,
+    get_iot_flow_runtime_record,
     get_work_request_record,
     list_all_digital_twin_relationships_records,
     list_digital_twin_adapters_page_record,
@@ -54,6 +56,7 @@ from .control_plane import (
     list_digital_twin_relationships_records,
     list_iot_domain_groups_records,
     list_iot_domains_records,
+    list_iot_flow_runtimes_page_record,
     list_work_request_errors_records,
     list_work_request_logs_records,
     list_work_requests_records,
@@ -990,6 +993,74 @@ def get_iot_domain(
     iot_domain_id: Annotated[str, "The IoT domain identifier"]
 ):
     return _delegate(f"Error getting IoT domain {iot_domain_id}", get_iot_domain_record, iot_domain_id)
+
+
+@tool(
+    description=(
+        "Lists one OCI SDK page of IoT Flow Runtimes. Use the returned next-page token "
+        "to request another page; limit is bounded to 1–100 per call. Runtime metadata "
+        "does not establish managed editor palette, module versions, or node help."
+    )
+)
+def list_iot_flow_runtimes_page(
+    compartment_id: Annotated[str, "The OCID of the compartment to list Flow Runtimes in"],
+    iot_domain_id: Annotated[Optional[str], "Filter by IoT domain OCID"] = None,
+    id: Annotated[Optional[str], "Filter by Flow Runtime OCID"] = None,
+    display_name: Annotated[Optional[str], "Filter by Flow Runtime display name"] = None,
+    lifecycle_state: Annotated[Optional[str], "Filter by lifecycle state"] = None,
+    page: Annotated[Optional[str], "OCI page token for a single SDK list page"] = None,
+    limit: Annotated[int, Field(description="Results per page, from 1 through 100", ge=1, le=100)] = 100,
+    sort_order: Annotated[Optional[str], "Sort order"] = None,
+    sort_by: Annotated[Optional[str], "Sort field"] = None,
+    opc_request_id: Annotated[Optional[str], "A unique Oracle-assigned request identifier"] = None,
+) -> dict[str, Any]:
+    return list_iot_flow_runtimes_page_record(
+        compartment_id=compartment_id,
+        iot_domain_id=iot_domain_id,
+        id=id,
+        display_name=display_name,
+        lifecycle_state=lifecycle_state,
+        page=page,
+        limit=limit,
+        sort_order=sort_order,
+        sort_by=sort_by,
+        opc_request_id=opc_request_id,
+    )
+
+
+@tool(
+    description=(
+        "Retrieves one IoT Flow Runtime by OCID. This returns OCI runtime metadata; "
+        "it does not establish managed editor palette, module versions, or node help."
+    )
+)
+def get_iot_flow_runtime(
+    iot_flow_runtime_id: Annotated[str, "The IoT Flow Runtime OCID"],
+    opc_request_id: Annotated[Optional[str], "A unique Oracle-assigned request identifier"] = None,
+) -> dict[str, Any]:
+    return get_iot_flow_runtime_record(
+        iot_flow_runtime_id=iot_flow_runtime_id,
+        opc_request_id=opc_request_id,
+    )
+
+
+@tool(
+    description=(
+        "Retrieves the complete SDK-decoded flow document for an IoT Flow Runtime. "
+        "The document may contain sensitive configuration and endpoints; protect the "
+        "result. Content is returned intact and is not logged, saved, or redacted. "
+        "This does not establish that credential-backed nodes can be restored."
+    )
+)
+def get_iot_flow_runtime_flows(
+    iot_flow_runtime_id: Annotated[str, "The IoT Flow Runtime OCID"],
+    opc_request_id: Annotated[Optional[str], "A unique Oracle-assigned request identifier"] = None,
+) -> dict[str, Any]:
+    return get_iot_flow_runtime_flows_record(
+        iot_flow_runtime_id=iot_flow_runtime_id,
+        opc_request_id=opc_request_id,
+    )
+
 
 @tool(
     description="Retrieves a specific IoT domain group by its identifier."
