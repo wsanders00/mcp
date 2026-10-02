@@ -25,7 +25,14 @@ from .agent_workflows import (
     get_twin_platform_context_impl,
     validate_twin_readiness_impl,
 )
-from .auth import PRINCIPAL_AUTH_TYPES, build_auth_context, get_default_region, resolved_auth_type, resolved_profile_name
+from .auth import (
+    auth_cache_selectors,
+    build_auth_context,
+    get_default_region,
+    has_inline_auth_secret,
+    resolved_auth_type,
+    resolved_profile_name,
+)
 from .client import get_iot_client
 from .control_plane import (
     get_digital_twin_adapter_record,
@@ -134,7 +141,15 @@ def _result_payload(value):
 
 
 @lru_cache(maxsize=None)
-def _get_identity_client_for_profile(profile_name: str, auth_type: str | None = None):
+def _get_identity_client_for_profile(
+    profile_name: str,
+    auth_type: str | None = None,
+    _selectors: tuple[str | None, ...] | None = None,
+):
+    return _create_identity_client_for_profile(profile_name, auth_type)
+
+
+def _create_identity_client_for_profile(profile_name: str, auth_type: str | None = None):
     logger.info(f"Creating Identity client for profile: {profile_name}")
     auth_context = build_auth_context(profile_name=profile_name, auth_type=auth_type)
     identity_client = oci.identity.IdentityClient(auth_context.config, signer=auth_context.signer)
@@ -150,7 +165,10 @@ def get_identity_client(
     resolved_profile = resolved_profile_name(profile_name)
     resolved_type = resolved_auth_type(auth_type)
     try:
-        return _get_identity_client_for_profile(resolved_profile, resolved_type)
+        selectors = auth_cache_selectors(resolved_profile, resolved_type)
+        if has_inline_auth_secret():
+            return _create_identity_client_for_profile(resolved_profile, resolved_type)
+        return _get_identity_client_for_profile(resolved_profile, resolved_type, selectors)
     except ConfigFileNotFound as exc:
         logger.error(f"OCI config file not found: {exc}")
         raise
@@ -160,10 +178,6 @@ def get_identity_client(
     except Exception as exc:
         logger.error(f"Error creating Identity client: {exc}")
         raise
-
-
-def _get_oci_config(profile_name: Optional[str] = None):
-    return oci.config.from_file(profile_name=resolved_profile_name(profile_name))
 
 
 def _get_iot_data_api_access_token(access_token: Optional[str] = None):
@@ -202,12 +216,7 @@ def _build_iot_data_api_url(
     region: Optional[str] = None,
 ):
     if region is None:
-        auth_type = resolved_auth_type()
-        if auth_type in PRINCIPAL_AUTH_TYPES:
-            region = get_default_region(auth_type=auth_type)
-        else:
-            config = _get_oci_config()
-            region = config.get("region")
+        region = get_default_region()
 
     base_url = (
         f"https://{iot_domain_group_short_id}.data.iot.{region}.oci.oraclecloud.com"

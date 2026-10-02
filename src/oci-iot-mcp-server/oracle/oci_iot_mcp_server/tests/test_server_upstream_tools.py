@@ -1,5 +1,3 @@
-import builtins
-import io
 from types import SimpleNamespace
 
 import httpx
@@ -13,6 +11,22 @@ from oci.iot.models import (
 )
 
 from oracle.oci_iot_mcp_server import server
+from oracle.oci_iot_mcp_server import client as iot_client_module
+
+
+@pytest.fixture(autouse=True)
+def isolated_oci_auth_inputs(monkeypatch, tmp_path):
+    config_file = tmp_path / "config"
+    config_file.write_text("[ALT]\n", encoding="utf-8")
+    monkeypatch.setenv("OCI_CONFIG_FILE", str(config_file))
+    for name in (
+        "OCI_MCP_AUTH_TYPE", "OCI_AUTH_TYPE", "ORACLE_MCP_AUTH_METHOD", "OCI_MCP_DELEGATION_TOKEN_FILE",
+        "OCI_MCP_DELEGATION_TOKEN", "OCI_MCP_OKE_SERVICE_ACCOUNT_TOKEN_PATH", "OCI_MCP_OKE_SERVICE_ACCOUNT_TOKEN",
+        "OCI_MCP_TENANCY_ID_OVERRIDE", "OCI_REGION", "OCI_IOT_DELEGATION_TOKEN",
+        "OCI_IOT_OKE_SERVICE_ACCOUNT_TOKEN_PATH", "OCI_IOT_OKE_SERVICE_ACCOUNT_TOKEN",
+        "OCI_IOT_AUTH_TYPE", "OCI_CONFIG_PROFILE", "ORACLE_MCP_AUTH_PROFILE", "TENANCY_ID_OVERRIDE",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 def _detail_factory(kind: str):
@@ -24,6 +38,47 @@ def _detail_factory(kind: str):
 
 def _response(*, status: int = 202, request_id: str = "req-123", headers: dict | None = None, data=None):
     return SimpleNamespace(status=status, request_id=request_id, headers=headers or {}, data=data)
+
+
+def _expected_user_agent():
+    from oracle.oci_iot_mcp_server import __project__, __version__
+
+    return f"{__project__.split('oracle.', 1)[1].removesuffix('-server')}/{__version__}"
+
+
+def _install_client_factory(monkeypatch, factory_kind: str, built: list):
+    def create(config, signer=None):
+        result = {"config": config, "signer": signer, "sequence": len(built)}
+        built.append(result)
+        return result
+
+    if factory_kind == "iot":
+        iot_client_module.clear_iot_client_cache()
+        monkeypatch.setattr(server.oci.iot, "IotClient", create)
+        return lambda: server.get_iot_client("ALT")
+    server._get_identity_client_for_profile.cache_clear()
+    monkeypatch.setattr(server.oci.identity, "IdentityClient", create)
+
+    def get_identity_client():
+        return server.get_identity_client("ALT")[0]
+
+    return get_identity_client
+
+
+def _patch_api_profile(monkeypatch, *, region="us-phoenix-1"):
+    monkeypatch.setattr(
+        server.oci.config,
+        "from_file",
+        lambda *, file_location=None, profile_name=None: {
+            "profile": profile_name,
+            "tenancy": "tenancy-1",
+            "user": "user-1",
+            "fingerprint": "aa:bb",
+            "key_file": "/tmp/key.pem",
+            "region": region,
+        },
+    )
+    monkeypatch.setattr(server.oci.signer, "Signer", lambda **kwargs: SimpleNamespace(kind="api_key"))
 
 
 def _simple_model(identifier: str, **kwargs):
@@ -51,6 +106,187 @@ def _fake_upstream_adapter():
         inbound_envelope=_fake_upstream_adapter_envelope(),
         inbound_routes=[_fake_upstream_adapter_route()],
     )
+
+
+@pytest.mark.parametrize("factory_kind", ["iot", "identity"])
+@pytest.mark.parametrize("auth_mode", ["auto", "security_token"])
+def test_session_auth_rejects_invalid_declared_token_without_api_key_fallback(
+    monkeypatch, tmp_path, factory_kind, auth_mode
+):
+    config_file = tmp_path / "config"
+    config_file.write_text("[ALT]\nsecurity_token_file = /missing/session-token\n", encoding="utf-8")
+    monkeypatch.setenv("OCI_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("OCI_MCP_AUTH_TYPE", auth_mode)
+    _patch_api_profile(monkeypatch)
+    monkeypatch.setattr(
+        server.oci.config,
+        "from_file",
+        lambda *, file_location=None, profile_name=None: {
+            "tenancy": "tenancy-1",
+            "user": "user-1",
+            "fingerprint": "aa:bb",
+            "key_file": "/tmp/key.pem",
+            "security_token_file": "/missing/session-token",
+            "region": "us-phoenix-1",
+        },
+    )
+    api_key_attempts = []
+    monkeypatch.setattr(server.oci.signer, "Signer", lambda **kwargs: api_key_attempts.append(kwargs))
+    factory_calls = []
+    make_client = _install_client_factory(monkeypatch, factory_kind, factory_calls)
+
+    with pytest.raises(ValueError, match="Unable to read security_token_file"):
+        make_client()
+
+    assert api_key_attempts == []
+    assert factory_calls == []
+
+
+@pytest.mark.parametrize("factory_kind", ["iot", "identity"])
+def test_auto_uses_api_key_for_inherited_only_session_token(monkeypatch, tmp_path, factory_kind):
+    config_file = tmp_path / "config"
+    config_file.write_text(
+        "[DEFAULT]\nsecurity_token_file = /inherited/token\n[ALT]\nuser = user-1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OCI_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("OCI_MCP_AUTH_TYPE", "auto")
+    _patch_api_profile(monkeypatch)
+    api_key_attempts = []
+    monkeypatch.setattr(
+        server.oci.signer,
+        "Signer",
+        lambda **kwargs: api_key_attempts.append(kwargs) or SimpleNamespace(kind="api_key"),
+    )
+    monkeypatch.setattr(
+        server.oci.auth.signers,
+        "SecurityTokenSigner",
+        lambda *args, **kwargs: pytest.fail("inherited token must not select session authentication"),
+    )
+    built = []
+    make_client = _install_client_factory(monkeypatch, factory_kind, built)
+
+    client = make_client()
+
+    assert len(api_key_attempts) == 1
+    assert len(built) == 1
+    assert client["config"]["additional_user_agent"] == _expected_user_agent()
+
+
+@pytest.mark.parametrize("factory_kind", ["iot", "identity"])
+def test_auto_trims_direct_session_token_before_signer_construction(
+    monkeypatch, tmp_path, factory_kind
+):
+    token_file = tmp_path / "session-token"
+    token_file.write_text("  session-token-value  \n", encoding="utf-8")
+    config_file = tmp_path / "config"
+    config_file.write_text(f"[ALT]\nsecurity_token_file = {token_file}\n", encoding="utf-8")
+    monkeypatch.setenv("OCI_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("OCI_MCP_AUTH_TYPE", "auto")
+    monkeypatch.setattr(
+        server.oci.config,
+        "from_file",
+        lambda *, file_location=None, profile_name=None: {
+            "profile": profile_name,
+            "tenancy": "tenancy-1",
+            "key_file": "/tmp/key.pem",
+            "security_token_file": str(token_file),
+        },
+    )
+    monkeypatch.setattr(server.oci.signer, "load_private_key_from_file", lambda *args, **kwargs: "private-key")
+    observed_tokens = []
+    monkeypatch.setattr(
+        server.oci.auth.signers,
+        "SecurityTokenSigner",
+        lambda token, key: observed_tokens.append(token) or SimpleNamespace(kind="session"),
+    )
+    monkeypatch.setattr(server.oci.signer, "Signer", lambda **kwargs: pytest.fail("must not use API key"))
+    built = []
+    make_client = _install_client_factory(monkeypatch, factory_kind, built)
+
+    client = make_client()
+
+    assert observed_tokens == ["session-token-value"]
+    assert len(built) == 1
+    assert client["config"]["additional_user_agent"] == _expected_user_agent()
+
+
+@pytest.mark.parametrize("factory_kind", ["iot", "identity"])
+def test_auth_factory_cache_tracks_config_and_region_selectors(monkeypatch, tmp_path, factory_kind):
+    first_config = tmp_path / "config-one"
+    second_config = tmp_path / "config-two"
+    first_config.write_text("[ALT]\n", encoding="utf-8")
+    second_config.write_text("[ALT]\n", encoding="utf-8")
+    monkeypatch.setenv("OCI_CONFIG_FILE", str(first_config))
+    monkeypatch.setenv("OCI_MCP_AUTH_TYPE", "api_key")
+    _patch_api_profile(monkeypatch)
+    built = []
+    make_client = _install_client_factory(monkeypatch, factory_kind, built)
+
+    original = make_client()
+    assert make_client() is original
+    monkeypatch.setenv("OCI_CONFIG_FILE", str(second_config))
+    changed_config = make_client()
+    assert changed_config is not original
+    monkeypatch.setenv("OCI_REGION", "us-chicago-1")
+    changed_region = make_client()
+
+    assert changed_region is not changed_config
+    assert len(built) == 3
+    assert changed_region["config"]["region"] == "us-chicago-1"
+
+
+@pytest.mark.parametrize("factory_kind", ["iot", "identity"])
+def test_auth_factory_rebuilds_for_legacy_oke_path_and_tenancy_selectors(
+    monkeypatch, factory_kind
+):
+    monkeypatch.setenv("OCI_MCP_AUTH_TYPE", "oke_workload_identity")
+    monkeypatch.setenv("OCI_IOT_OKE_SERVICE_ACCOUNT_TOKEN_PATH", "/token/path-one")
+    monkeypatch.setenv("OCI_IOT_TENANCY_ID_OVERRIDE", "tenancy-one")
+    observed = []
+
+    def oke_signer(*, service_account_token_path=None, **kwargs):
+        observed.append(service_account_token_path)
+        return SimpleNamespace(region="us-phoenix-1")
+
+    monkeypatch.setattr(server.oci.auth.signers, "get_oke_workload_identity_resource_principal_signer", oke_signer)
+    built = []
+    make_client = _install_client_factory(monkeypatch, factory_kind, built)
+
+    first = make_client()
+    assert make_client() is first
+    monkeypatch.setenv("OCI_IOT_OKE_SERVICE_ACCOUNT_TOKEN_PATH", "/token/path-two")
+    changed_path = make_client()
+    monkeypatch.setenv("OCI_IOT_TENANCY_ID_OVERRIDE", "tenancy-two")
+    changed_tenancy = make_client()
+
+    assert changed_path is not first
+    assert changed_tenancy is not changed_path
+    assert observed == ["/token/path-one", "/token/path-two", "/token/path-two"]
+    assert len(built) == 3
+
+
+@pytest.mark.parametrize("factory_kind", ["iot", "identity"])
+def test_auth_factory_does_not_cache_rotated_inline_delegation_tokens(monkeypatch, factory_kind):
+    monkeypatch.setenv("OCI_MCP_AUTH_TYPE", "instance_principal_delegation")
+    monkeypatch.setenv("OCI_IOT_DELEGATION_TOKEN", "token-one")
+    observed = []
+
+    def instance_delegation_signer(*, delegation_token):
+        observed.append(delegation_token)
+        return SimpleNamespace(tenancy_id="tenancy-1", region="us-phoenix-1")
+
+    monkeypatch.setattr(server.oci.auth.signers, "InstancePrincipalsDelegationTokenSigner", instance_delegation_signer)
+    built = []
+    make_client = _install_client_factory(monkeypatch, factory_kind, built)
+
+    first = make_client()
+    monkeypatch.setenv("OCI_IOT_DELEGATION_TOKEN", "token-two")
+    second = make_client()
+
+    assert first is not second
+    assert observed == ["token-one", "token-two"]
+    assert len(built) == 2
 
 
 def test_tool_decorator_registers_tool_and_returns_original_function(monkeypatch):
@@ -96,25 +332,24 @@ def test_json_and_response_helpers_cover_normalization_and_error_paths(monkeypat
     assert server._result_payload([{"id": "x"}]) == {"result": [{"id": "x"}]}
 
 
-def test_get_identity_client_for_profile_builds_security_token_client(monkeypatch):
+def test_get_identity_client_for_profile_builds_security_token_client(monkeypatch, tmp_path):
     server._get_identity_client_for_profile.cache_clear()
+    key_file = tmp_path / "key.pem"
+    token_file = tmp_path / "security.token"
+    token_file.write_text("token-123", encoding="utf-8")
+    monkeypatch.setenv("OCI_CONFIG_FILE", str(tmp_path / "config"))
+    (tmp_path / "config").write_text(f"[ALT]\nsecurity_token_file = {token_file}\n", encoding="utf-8")
     config = {
-        "key_file": "/tmp/key.pem",
-        "security_token_file": "/tmp/security.token",
+        "key_file": str(key_file),
+        "security_token_file": str(token_file),
         "tenancy": "ocid1.tenancy.oc1..aaaa",
     }
 
-    monkeypatch.setattr(server.oci.config, "from_file", lambda profile_name: dict(config))
-    monkeypatch.setattr(server.os.path, "exists", lambda path: path == "/tmp/security.token")
+    monkeypatch.setattr(server.oci.config, "from_file", lambda *, file_location=None, profile_name=None: dict(config))
     monkeypatch.setattr(
         server.oci.signer,
         "load_private_key_from_file",
         lambda path, pass_phrase=None: f"key:{path}",
-    )
-    monkeypatch.setattr(
-        builtins,
-        "open",
-        lambda path, mode="r": io.StringIO("token-123"),
     )
     monkeypatch.setattr(
         server.oci.auth.signers,
@@ -130,8 +365,8 @@ def test_get_identity_client_for_profile_builds_security_token_client(monkeypatc
     client, tenancy_id = server._get_identity_client_for_profile("ALT")
 
     assert tenancy_id == "ocid1.tenancy.oc1..aaaa"
-    assert client["signer"] == {"token": "token-123", "private_key": "key:/tmp/key.pem"}
-    assert client["config"]["additional_user_agent"].endswith(f"/{server.__version__}")
+    assert client["signer"] == {"token": "token-123", "private_key": f"key:{key_file}"}
+    assert client["config"]["additional_user_agent"] == _expected_user_agent()
 
 
 def test_get_identity_client_uses_api_key_fallback_when_security_token_missing(monkeypatch):
@@ -140,7 +375,7 @@ def test_get_identity_client_uses_api_key_fallback_when_security_token_missing(m
     monkeypatch.setattr(
         server.oci.config,
         "from_file",
-        lambda profile_name: {
+        lambda *, file_location=None, profile_name=None: {
             "profile": profile_name,
             "key_file": "/tmp/api-key.pem",
             "tenancy": "ocid1.tenancy.oc1..bbbb",
@@ -164,7 +399,7 @@ def test_get_identity_client_uses_api_key_fallback_when_security_token_missing(m
 
     assert tenancy_id == "ocid1.tenancy.oc1..bbbb"
     assert client["signer"]["kind"] == "api_key"
-    assert client["config"]["additional_user_agent"].endswith(f"/{server.__version__}")
+    assert client["config"]["additional_user_agent"] == _expected_user_agent()
 
 
 def test_get_identity_client_uses_instance_principal_tenancy(monkeypatch):
@@ -192,6 +427,7 @@ def test_get_identity_client_uses_instance_principal_tenancy(monkeypatch):
     assert tenancy_id == "ocid1.tenancy.oc1..cccc"
     assert client["signer"] is signer
     assert client["config"]["region"] == "us-phoenix-1"
+    assert client["config"]["additional_user_agent"] == _expected_user_agent()
 
 
 def test_get_identity_client_uses_resource_principal_tenancy(monkeypatch):
@@ -219,6 +455,7 @@ def test_get_identity_client_uses_resource_principal_tenancy(monkeypatch):
     assert tenancy_id == "ocid1.tenancy.oc1..dddd"
     assert client["signer"] is signer
     assert client["config"]["region"] == "us-chicago-1"
+    assert client["config"]["additional_user_agent"] == _expected_user_agent()
 
 
 def test_create_digital_twin_adapter_serializes_nested_adapter(monkeypatch):
@@ -268,6 +505,7 @@ def test_get_identity_client_uses_instance_principal_delegation_tenancy(monkeypa
     assert tenancy_id == "ocid1.tenancy.oc1..delegated1"
     assert client["signer"] is signer
     assert client["config"]["region"] == "us-ashburn-1"
+    assert client["config"]["additional_user_agent"] == _expected_user_agent()
 
 
 def test_get_identity_client_uses_resource_principal_delegation_tenancy(monkeypatch):
@@ -296,6 +534,7 @@ def test_get_identity_client_uses_resource_principal_delegation_tenancy(monkeypa
     assert tenancy_id == "ocid1.tenancy.oc1..delegated2"
     assert client["signer"] is signer
     assert client["config"]["region"] == "us-sanjose-1"
+    assert client["config"]["additional_user_agent"] == _expected_user_agent()
 
 
 def test_get_identity_client_uses_oke_workload_identity_tenancy_override(monkeypatch):
@@ -323,6 +562,7 @@ def test_get_identity_client_uses_oke_workload_identity_tenancy_override(monkeyp
     assert tenancy_id == "ocid1.tenancy.oc1..override"
     assert client["signer"] is signer
     assert client["config"]["region"] == "us-phoenix-1"
+    assert client["config"]["additional_user_agent"] == _expected_user_agent()
 
 
 def test_get_identity_client_rejects_oke_workload_identity_without_tenancy_override(monkeypatch):
@@ -354,7 +594,7 @@ def test_get_identity_client_uses_default_profile_from_env(monkeypatch):
     monkeypatch.setattr(
         server,
         "_get_identity_client_for_profile",
-        lambda profile_name, auth_type=None: ("client", profile_name),
+        lambda profile_name, auth_type=None, selectors=None: ("client", profile_name),
     )
 
     assert server.get_identity_client() == ("client", "ALT")
@@ -374,7 +614,7 @@ def test_get_identity_client_logs_and_reraises_known_errors(monkeypatch, excepti
     monkeypatch.setattr(
         server,
         "_get_identity_client_for_profile",
-        lambda profile_name, auth_type=None: (_ for _ in ()).throw(exception),
+        lambda profile_name, auth_type=None, selectors=None: (_ for _ in ()).throw(exception),
     )
 
     with pytest.raises(type(exception)):
@@ -388,11 +628,11 @@ def test_oci_config_token_query_and_url_helpers_cover_success_and_failure_paths(
     monkeypatch.setattr(
         server.oci.config,
         "from_file",
-        lambda profile_name: {"profile": profile_name, "region": "us-ashburn-1"},
+        lambda *, file_location=None, profile_name=None: {"profile": profile_name, "region": "us-ashburn-1"},
     )
 
-    assert server._get_oci_config() == {"profile": "DEFAULT", "region": "us-ashburn-1"}
-    assert server._get_oci_config("ALT") == {"profile": "ALT", "region": "us-ashburn-1"}
+    assert server.get_default_region() == "us-ashburn-1"
+    assert server.get_default_region("ALT") == "us-ashburn-1"
 
     monkeypatch.setenv("OCI_IOT_DATA_API_ACCESS_TOKEN", "env-token")
     assert server._get_iot_data_api_access_token() == "env-token"
@@ -414,7 +654,7 @@ def test_oci_config_token_query_and_url_helpers_cover_success_and_failure_paths(
     with pytest.raises(ValueError, match="query_params must be a dictionary"):
         server._normalize_query_params("[]")
 
-    monkeypatch.setattr(server, "_get_oci_config", lambda profile_name=None: {"region": "us-phoenix-1"})
+    monkeypatch.setattr(server, "get_default_region", lambda profile_name=None, auth_type=None: "us-phoenix-1")
     assert server._build_iot_data_api_url("group-short", "domain-short", "/rawData") == (
         "https://group-short.data.iot.us-phoenix-1.oci.oraclecloud.com/ords/domain-short/rawData"
     )

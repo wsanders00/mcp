@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Breaking Changes
+
+- `auto` selects session-token auth only when `security_token_file` is declared directly in the selected profile; a token inherited from `[DEFAULT]` now selects API-key auth. An explicitly selected session-token profile must declare its own token file, and an invalid declared token fails closed instead of falling back to API-key auth.
+- OKE and delegation authentication reject simultaneous token-file and inline-token inputs. OKE no longer gives the inline token precedence.
+
+### Changed
+
+- Use `oracle-mcp-common` for OCI credential resolution, retaining IoT's existing eight authentication modes and deprecated `OCI_IOT_*` aliases. Canonical `OCI_MCP_*` settings take precedence, and conflicting inline/path delegation or OKE token inputs now fail closed.
+
 ### Security
 
 - Require PyJWT 2.15.1 or newer and urllib3 2.8.0 or newer to address published security advisories. The PyJWT shared-options advisory has no patched release listed; upgrading does not establish that it is resolved.

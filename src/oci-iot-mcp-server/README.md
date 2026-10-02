@@ -91,7 +91,9 @@ uv run oracle.oci-iot-mcp-server
 
 ## Configuration
 
-The server supports multiple OCI SDK authentication modes through `OCI_IOT_AUTH_TYPE`.
+The server supports multiple OCI SDK authentication modes through `OCI_MCP_AUTH_TYPE`.
+The older `OCI_IOT_AUTH_TYPE` remains supported as a deprecated alias; the canonical
+variable takes precedence when both are set.
 
 Supported values:
 
@@ -104,34 +106,48 @@ Supported values:
 - `resource_principal_delegation`
 - `oke_workload_identity`
 
-If `OCI_IOT_AUTH_TYPE` is not set, the server defaults to `auto`.
+If neither variable is set, the server defaults to `auto`.
 
-`auto` uses the OCI configuration profile specified by `OCI_CONFIG_PROFILE` and behaves as follows:
+`auto` uses the selected OCI configuration profile and behaves as follows:
 
-1. If the selected profile has a usable `security_token_file`, the server uses session-token auth.
-2. Otherwise, it falls back to standard API-key auth from the same profile.
+1. If the selected profile directly declares `security_token_file`, the server selects session-token auth. A value inherited only from `[DEFAULT]` does not select session-token auth; `auto` uses API-key auth instead.
+2. If no token file is declared directly, `auto` uses standard API-key auth from the selected profile.
 
-`OCI_CONFIG_PROFILE` still applies to `auto`, `security_token`, and `api_key`. If not set, it defaults to
-`DEFAULT`.
+When `security_token` is selected explicitly, the selected profile must directly declare
+`security_token_file`; a value inherited from `[DEFAULT]` is rejected. A declared session
+token that is missing, empty, or otherwise invalid fails closed instead of falling back to
+API-key auth. Token-file contents are trimmed before signer construction.
+
+`OCI_CONFIG_FILE` selects the OCI configuration file and `OCI_CONFIG_PROFILE` selects
+the profile. If the profile is not set, it defaults to `DEFAULT`.
+`OCI_REGION` overrides the configured profile or principal region.
+The older `ORACLE_MCP_AUTH_PROFILE` profile selector remains supported temporarily.
 
 `instance_principal` is intended for code running on OCI compute instances with instance principal access.
 
 `resource_principal` is intended for OCI runtime environments that expose resource principal credentials.
 
-`instance_principal_delegation` and `resource_principal_delegation` require
-`OCI_IOT_DELEGATION_TOKEN`.
+`instance_principal_delegation` and `resource_principal_delegation` accept
+`OCI_MCP_DELEGATION_TOKEN_FILE`. Inline `OCI_MCP_DELEGATION_TOKEN` and the legacy
+`OCI_IOT_DELEGATION_TOKEN` remain supported temporarily with a deprecation warning.
+Do not set both the canonical token file and an inline token; the combination is rejected.
 
 `oke_workload_identity` is intended for OKE workload identity environments. You can optionally override the
 service account token source with either:
 
-- `OCI_IOT_OKE_SERVICE_ACCOUNT_TOKEN`
-- `OCI_IOT_OKE_SERVICE_ACCOUNT_TOKEN_PATH`
+- `OCI_MCP_OKE_SERVICE_ACCOUNT_TOKEN_PATH`
+- `OCI_MCP_OKE_SERVICE_ACCOUNT_TOKEN` (deprecated inline form)
 
-If both are set, `OCI_IOT_OKE_SERVICE_ACCOUNT_TOKEN` takes precedence.
+The legacy `OCI_IOT_OKE_SERVICE_ACCOUNT_TOKEN_PATH` and
+`OCI_IOT_OKE_SERVICE_ACCOUNT_TOKEN` variables remain supported temporarily. Set only
+one token source; configuring both a path and an inline token is rejected. Earlier
+versions gave the inline OKE token precedence when both were set.
 
 Identity-scoped paths that need an explicit tenancy OCID, such as `list_compartments`, may also require:
 
-- `OCI_IOT_TENANCY_ID_OVERRIDE`
+- `OCI_MCP_TENANCY_ID_OVERRIDE`
+
+The legacy `OCI_IOT_TENANCY_ID_OVERRIDE` remains supported temporarily.
 
 `auto` still only covers profile-backed security-token and API-key flows. It does not auto-detect
 delegation-token or OKE workload-identity auth.
