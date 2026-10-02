@@ -15,6 +15,44 @@ service. It includes:
 uv run oracle.oci-iot-mcp-server
 ```
 
+## Development
+
+From the repository root, install the tool versions pinned in `.prototools`,
+including Moon, Python, and uv:
+
+```sh
+proto install
+uv sync --project src/oci-iot-mcp-server --locked --all-extras --dev
+```
+
+Make the pinned Python version available before syncing. The IoT project uses
+the repository's `src/common` checkout for `oracle-mcp-common` during local
+workspace development. Built distributions declare the published
+`oracle-mcp-common` dependency instead.
+
+Run the focused unit tests with branch coverage; the package enforces a 90%
+coverage minimum:
+
+```sh
+moon run oci-iot-mcp-server:test
+```
+
+Check the lockfile and packaging with:
+
+```sh
+moon run oci-iot-mcp-server:lock-check oci-iot-mcp-server:install-check
+```
+
+The install check runs the tests and builds and installs the distribution. Run
+repository lint after Python source changes:
+
+```sh
+moon run root:lint
+```
+
+Unit tests use mocked clients and credentials; they do not require OCI
+credentials or a live OCI service.
+
 ## Tools
 
 | Tool Name | Description |
