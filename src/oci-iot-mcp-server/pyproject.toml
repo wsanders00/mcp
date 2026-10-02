@@ -14,6 +14,8 @@ dependencies = [
     "oci>=2.185.0",
     "pydantic>=2.13.4",
     "httpx>=0.28.1",
+    "PyJWT>=2.15.1,<3",
+    "urllib3>=2.8.0,<3",
 ]
 
 classifiers = [
