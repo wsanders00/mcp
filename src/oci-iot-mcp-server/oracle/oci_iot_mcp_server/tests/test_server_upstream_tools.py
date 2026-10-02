@@ -1208,6 +1208,37 @@ def test_model_mutation_tools_build_details_and_return_model_dict(monkeypatch, c
 
 
 @pytest.mark.parametrize(
+    "group_type",
+    [None, "PRODUCTION", "DEVELOPMENT", "STANDARD", "LIGHTWEIGHT"],
+)
+def test_create_iot_domain_group_passes_type_to_oci_unchanged(monkeypatch, group_type):
+    captured = {}
+    monkeypatch.setattr(
+        server.oci.iot.models,
+        "CreateIotDomainGroupDetails",
+        _detail_factory("CreateIotDomainGroupDetails"),
+    )
+
+    def create_iot_domain_group(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(data=_simple_model("group-1"))
+
+    monkeypatch.setattr(
+        server,
+        "get_iot_client",
+        lambda: SimpleNamespace(create_iot_domain_group=create_iot_domain_group),
+    )
+
+    kwargs = {"compartment_id": "compartment-1"}
+    if group_type is not None:
+        kwargs["type"] = group_type
+    result = server.create_iot_domain_group(**kwargs)
+
+    assert result["id"] == "group-1"
+    assert captured["create_iot_domain_group_details"].type == group_type
+
+
+@pytest.mark.parametrize(
     ("connectivity_type", "gateways"),
     [
         ("GATEWAY", None),
@@ -1529,7 +1560,8 @@ def test_list_digital_twin_adapter_and_model_pages_return_metadata(monkeypatch):
     }
 
 
-def test_domain_group_domain_and_work_request_list_tools_forward_sdk_filters(monkeypatch):
+@pytest.mark.parametrize("group_type", ["PRODUCTION", "DEVELOPMENT", "STANDARD", "LIGHTWEIGHT"])
+def test_domain_group_domain_and_work_request_list_tools_forward_sdk_filters(monkeypatch, group_type):
     captured = {}
 
     def list_groups(**kwargs):
@@ -1553,7 +1585,7 @@ def test_domain_group_domain_and_work_request_list_tools_forward_sdk_filters(mon
         id="group-1",
         display_name="Group 1",
         lifecycle_state="ACTIVE",
-        type="STANDARD",
+        type=group_type,
         page="group-page",
         limit=25,
         sort_order="ASC",
@@ -1593,7 +1625,7 @@ def test_domain_group_domain_and_work_request_list_tools_forward_sdk_filters(mon
             "id": "group-1",
             "display_name": "Group 1",
             "lifecycle_state": "ACTIVE",
-            "type": "STANDARD",
+            "type": group_type,
             "page": "group-page",
             "limit": 25,
             "sort_order": "ASC",
@@ -2050,11 +2082,13 @@ RESPONSE_TOOL_CASES = [
 @pytest.mark.parametrize("case", RESPONSE_TOOL_CASES, ids=lambda case: case["tool_name"])
 def test_response_mutation_tools_return_response_metadata(monkeypatch, case):
     captured = {}
+    calls = []
     if "constructor_name" in case:
         monkeypatch.setattr(server.oci.iot.models, case["constructor_name"], _detail_factory(case["constructor_name"]))
 
     def method(**kwargs):
         captured.update(kwargs)
+        calls.append(kwargs)
         return _response(status=202, request_id="req-123", headers={"etag": "etag-1"}, data={"ok": True})
 
     monkeypatch.setattr(server, "get_iot_client", lambda: SimpleNamespace(**{case["client_method"]: method}))
@@ -2074,6 +2108,8 @@ def test_response_mutation_tools_return_response_metadata(monkeypatch, case):
             assert getattr(details, key) == value
     for key, value in case["expected_client_kwargs"].items():
         assert captured[key] == value
+    if case["tool_name"] == "delete_iot_domain":
+        assert calls == [case["expected_client_kwargs"]]
 
 
 @pytest.mark.parametrize(

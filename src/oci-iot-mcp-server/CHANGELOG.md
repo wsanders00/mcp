@@ -10,6 +10,7 @@
 ### Changed
 
 - Use `oracle-mcp-common` for OCI credential resolution, retaining IoT's existing eight authentication modes and deprecated `OCI_IOT_*` aliases. Canonical `OCI_MCP_*` settings take precedence, and conflicting inline/path delegation or OKE token inputs now fail closed.
+- Document current and legacy IoT domain group types, the active digital-twin restriction on IoT domain deletion, and the compatible additive minor-model upgrade workflow. Model downgrades are unsupported.
 
 ### Security
 

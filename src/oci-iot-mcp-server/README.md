@@ -186,6 +186,45 @@ For ORDS-backed operator tools, set:
 - String-returning tools such as `get_digital_twin_instance_content` and `get_digital_twin_model_spec`
   return plain text content.
 
+## IoT Resource Lifecycle Guidance
+
+### Domain group types
+
+See Oracle's [domain group guidance](https://docs.oracle.com/en-us/iaas/Content/internet-of-things/create-domain-group.htm).
+
+New IoT domain groups use `PRODUCTION` or `DEVELOPMENT`. If `type` is omitted,
+OCI selects `DEVELOPMENT`, which uses fewer resources for development and
+testing. `PRODUCTION` supports scaling and high availability with automatic
+failover. A group's type is immutable; create a new group to use a different
+type. Existing `STANDARD` and `LIGHTWEIGHT` groups remain available until
+2027-04-14. The create and list tools pass supplied type values to OCI without
+normalizing them.
+
+### Deleting an IoT domain
+
+See the [OCI IoT release note](https://docs.oracle.com/en-us/iaas/releasenotes/internet-of-things/update-06092026.htm).
+
+OCI rejects deletion of an IoT domain while active digital twin resources
+remain. Delete the associated digital twin instances before calling
+`delete_iot_domain`. The service enforces this restriction.
+
+### Upgrading a digital twin model
+
+See Oracle's [compatible model version upgrade scenario](https://docs.oracle.com/en-us/iaas/Content/internet-of-things/create-new-model-version.htm).
+
+For an additive model change, create the exact next minor version (`+.1`) in the
+same model family and major version, keeping existing model elements and their
+contracts unchanged. Then create a new adapter for that model version and
+update the existing digital twin instance to use the new adapter. This keeps
+the twin's identity. OCI checks model and adapter compatibility; this server
+does not validate DTDL compatibility locally or migrate twins automatically.
+
+Major-version changes and changes that break existing model elements are not
+compatible with this upgrade path; use a new model and digital twin instance
+for those changes. Model downgrades are unsupported. Keep prior models and
+adapters available for twins that still use them and for recovery planning, but
+do not assume an upgraded twin can switch to an adapter for an older model.
+
 ## Agent Workflow Guidance
 
 - `get_twin_platform_context` is the best first call when an agent needs to understand how a twin maps to
