@@ -85,11 +85,62 @@ fixture has another. Startup/listing performs no fake renewal or account work.
 FastMCP 3.4.5 lacks a supported external session-removal API. This fixture caps
 successful initializations for the process lifetime (default 32); expiry/DELETE
 revoke access but do not recycle those slots. Restart permits new sessions and
-invalidates previous handles. This bounded fixture policy is not a production
-long-running session-reaping design. It must be settled before deployment.
+invalidates previous handles. This remains fixture-only behavior.
 
-Container tests publish only `127.0.0.1` and use a private internal network,
-non-root identity, read-only root, dropped capabilities, no-new-privileges,
-bounded memory/CPU/PIDs/logs and a private read-only caller-token volume.
+## Shared cloud-disabled catalog
+
+`server.main --shared-http-cloud-disabled` serves the actual 72-tool FastMCP
+registry at `/mcp` using stateless Streamable HTTP. A FastMCP `on_call_tool`
+middleware rejects every tool invocation before registry lookup and tool
+execution, including calls for unknown tool names. Tool discovery remains
+available, but no OCI SDK client, profile, credential, token, or ORDS request is
+used by this mode. The regular stdio entry point and offline fixture remain
+separate.
+
+All `/mcp` requests and `GET /healthz` require a configured bearer token. The
+caller mapping is loaded at startup from a regular file owned by the process UID
+with mode `0600`; bearer tokens must be at least 32 ASCII characters. Host and
+Origin checks accept only the configured local loopback names. Health returns
+`{"cloud_access":"disabled","tool_count":72}` and contains no caller or
+credential data. Uvicorn access logging is disabled.
+
+Stateless transport removes the fixture's cumulative 32-session issue for this
+mode. This is still an offline authenticated catalog and health surface, not a
+provider adapter or a live OCI readiness check. Real tool execution, credential
+provisioning, OCI egress, provider authorization and live validation remain
+separate work and are not enabled by this change.
+
+The synthetic fixture's container tests publish only `127.0.0.1` and use a
+private internal network, non-root identity, read-only root, dropped
+capabilities, no-new-privileges, bounded memory/CPU/PIDs/logs and a private
+read-only caller-token volume.
 No host credential directories, projects or Docker socket enter the service.
 All tokens/data in disposable tests are generated local fixtures, not OCI secrets.
+
+## Shared read-only OCI mode
+
+`server.main --shared-http-read-only --caller-config PATH --read-policy PATH`
+serves the same stateless 72-tool catalog while enabling only `get_iot_domain`
+and `get_digital_twin_model`. The private version-1 policy binds one region,
+security-token profile/configuration, tenancy, domain group, domain,
+compartment, one explicit model ID, credential generation, and exactly two
+allowed caller identifiers. The caller-token file must have exactly two
+entries whose caller IDs match that policy set. Policy, OCI config,
+security-token, and private-key files must be
+regular nonsymlink files owned by the service UID with mode `0600`.
+
+The shared HTTP bearer identity is bound to the request context and checked
+against `allowed_callers` before dispatch. The first permitted call builds one
+OCI SDK client; all calls in that process share the same immutable
+security-token signer, and token expiry requires an explicit process restart
+after reauthentication. Client requests are restricted to exact HTTPS GET
+paths for the configured domain and model allowlist, with TLS verification,
+no redirects, no proxy environment inheritance, no retry, and bounded
+connect/read timeouts. Domain response identity, group, and compartment and
+model response identity and domain are checked before returning data. Errors
+are sanitized. Health reports `cloud_access: read_only`, `tool_count: 72`, and
+the sorted names of the two enabled tools.
+
+This is an implementation contract. Offline unit tests use mocked SDK clients;
+they do not establish OCI reachability, cloud authorization, deployment state,
+or provider behavior.

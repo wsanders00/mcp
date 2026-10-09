@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Add an authenticated shared HTTP read-only mode with policy-bound IoT domain and digital-twin model GET access.
+
 ### Breaking Changes
 
 - `auto` selects session-token auth only when `security_token_file` is declared directly in the selected profile; a token inherited from `[DEFAULT]` now selects API-key auth. An explicitly selected session-token profile must declare its own token file, and an invalid declared token fails closed instead of falling back to API-key auth.

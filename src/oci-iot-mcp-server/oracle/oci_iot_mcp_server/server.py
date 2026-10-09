@@ -3290,6 +3290,49 @@ def health_check():
 
 def main():
     """Main function to run the MCP server."""
+    if "--shared-http-read-only" in sys.argv[1:]:
+        import argparse
+        from pathlib import Path
+
+        import uvicorn
+
+        from .shared_http import build_shared_readonly_http_app, load_caller_tokens
+        from .shared_readonly import load_read_policy
+
+        parser = argparse.ArgumentParser(description="Authenticated bounded OCI IoT read-only HTTP mode")
+        parser.add_argument("--shared-http-read-only", action="store_true", required=True)
+        parser.add_argument("--caller-config", type=Path, required=True)
+        parser.add_argument("--read-policy", type=Path, required=True)
+        parser.add_argument("--listen-host", choices=("127.0.0.1", "0.0.0.0"), default="127.0.0.1")
+        parser.add_argument("--listen-port", type=int, default=8765)
+        args = parser.parse_args()
+        tokens = load_caller_tokens(args.caller_config)
+        policy = load_read_policy(args.read_policy)
+        app = build_shared_readonly_http_app(mcp, caller_tokens=tokens, policy=policy, port=args.listen_port)
+        uvicorn.run(app, host=args.listen_host, port=args.listen_port,
+                    access_log=False, log_level="warning")
+        return
+    if "--shared-http-cloud-disabled" in sys.argv[1:]:
+        import argparse
+        from pathlib import Path
+
+        import uvicorn
+
+        from .shared_http import build_shared_http_app, load_caller_tokens
+
+        parser = argparse.ArgumentParser(
+            description="Authenticated shared HTTP catalog; cloud operations disabled"
+        )
+        parser.add_argument("--shared-http-cloud-disabled", action="store_true", required=True)
+        parser.add_argument("--caller-config", type=Path, required=True)
+        parser.add_argument("--listen-host", choices=("127.0.0.1", "0.0.0.0"), default="127.0.0.1")
+        parser.add_argument("--listen-port", type=int, default=8765)
+        args = parser.parse_args()
+        tokens = load_caller_tokens(args.caller_config)
+        app = build_shared_http_app(mcp, caller_tokens=tokens, port=args.listen_port)
+        uvicorn.run(app, host=args.listen_host, port=args.listen_port,
+                    access_log=False, log_level="warning")
+        return
     if "--offline-fixture-http" in sys.argv[1:]:
         import argparse
         import stat

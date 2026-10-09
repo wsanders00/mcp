@@ -15,6 +15,65 @@ service. It includes:
 uv run oracle.oci-iot-mcp-server
 ```
 
+### Shared cloud-disabled HTTP catalog
+
+The shared HTTP mode serves this server's actual MCP tool catalog over
+Streamable HTTP while rejecting every tool call before tool code runs. It is
+intended for authenticated local catalog discovery and health checks; it cannot
+perform OCI or IoT Data API operations. Default stdio mode is unchanged.
+
+Provide an owner-readable regular caller configuration file with mode `0600`,
+owned by the server UID. It contains a JSON object mapping high-entropy bearer
+tokens (at least 32 ASCII characters) to non-empty caller identifiers. Keep the
+file outside the image and mount it read-only. The tokens authenticate local
+HTTP callers; they are not OCI credentials.
+
+```sh
+uv run oracle.oci-iot-mcp-server --shared-http-cloud-disabled \
+  --caller-config /run/service/callers.json \
+  --listen-host 0.0.0.0 --listen-port 8765
+```
+
+This mode uses stateless Streamable HTTP at `/mcp`, so it does not consume the
+offline fixture's lifetime session slots. Requests and `/healthz` require a
+configured bearer token and a local Host/Origin. `/healthz` reports only that
+cloud access is disabled and the 72-tool catalog size. Bind/publish the service
+only through an isolated internal container network and a trusted loopback
+forward; this mode does not enable real OCI access.
+
+### Shared read-only IoT HTTP mode
+
+`--shared-http-read-only` adds an explicitly bounded security-token-backed
+mode. It exposes the existing 72-tool catalog but permits only
+`get_iot_domain` for the exact policy domain and `get_digital_twin_model` for
+an explicit model ID allowlist. Every other tool, target, malformed argument
+set, and unauthorized caller is rejected before OCI client construction.
+The SDK client is created on the first permitted call and held for one
+credential generation; restart the service after reauthentication. Only exact
+HTTPS GET endpoints for the configured targets are allowed, with redirects and
+environment proxies disabled.
+
+The private JSON policy is version 1 and must be a regular, nonsymlink file
+owned by the service UID with mode `0600`. Its fields are `region`, `profile`,
+`config_file`, `auth_tenancy_id`, `credential_generation`, `iot_domain_id`,
+`iot_domain_group_id`, `compartment_id`, nonempty `model_ids`, and nonempty
+`allowed_callers`. The fixed grant requires exactly one model ID and two
+distinct caller IDs. The caller-token file must contain exactly two entries,
+with those same caller IDs. The referenced OCI config, security token, and private key
+must also be regular files owned by that UID with mode `0600`. The profile
+must provide a security-token credential. Do not place real identifiers or
+credential paths in checked-in policy examples.
+
+```sh
+uv run oracle.oci-iot-mcp-server --shared-http-read-only \
+  --caller-config /run/oci/callers.json --read-policy /run/oci/policy.json \
+  --listen-host 0.0.0.0 --listen-port 8765
+```
+
+The authenticated `/healthz` response reports `cloud_access: read_only`, the
+72-tool catalog size, and the two enabled tool names. This mode grants the
+same configured read-only sandbox permission to each listed caller.
+
 ## Development
 
 From the repository root, install the tool versions pinned in `.prototools`,
