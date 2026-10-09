@@ -14,6 +14,8 @@
 
 ### Added
 
+- Add disconnected target-binding and credential-generation contracts for a future shared runtime, with offline fixtures; no HTTP activation, credential reader or OCI provider is included.
+
 - Add read-only Flow Runtime tools for one bounded list page, full SDK runtime metadata, and the complete SDK-decoded flow document with its own ETag. Return explicit success/error envelopes and selected response metadata; document sensitive output and managed-editor evidence boundaries.
 
 ### Security

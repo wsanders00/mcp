@@ -559,6 +559,10 @@ ensure compliance with their respective open source licenses.
 
 ## Disclaimer
 
+The optional [offline runtime contracts](OFFLINE-RUNTIME.md) provide local policy
+fixtures for target bindings and credential generations. They are not connected
+to this server's tools or authentication and do not activate HTTP or OCI access.
+
 Users are responsible for their local environment and credential safety. Different language model
 selections may yield different results and performance.
 
