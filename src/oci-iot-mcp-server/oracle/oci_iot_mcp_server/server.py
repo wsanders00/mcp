@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import time
+import sys
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Annotated, Any, Optional
@@ -3289,6 +3290,35 @@ def health_check():
 
 def main():
     """Main function to run the MCP server."""
+    if "--offline-fixture-http" in sys.argv[1:]:
+        import argparse
+        import stat
+        from pathlib import Path
+
+        import uvicorn
+
+        from .runtime_http import build_fixture_app
+
+        parser = argparse.ArgumentParser(description="Synthetic local HTTP fixture; no OCI capability")
+        parser.add_argument("--offline-fixture-http", action="store_true", required=True)
+        parser.add_argument("--caller-config", type=Path, required=True)
+        parser.add_argument("--listen-host", choices=("127.0.0.1", "0.0.0.0"), default="127.0.0.1")
+        parser.add_argument("--port", type=int, default=8765)
+        args = parser.parse_args()
+        try:
+            info = args.caller_config.lstat()
+            if (not stat.S_ISREG(info.st_mode) or info.st_mode & 0o777 != 0o600
+                    or info.st_uid != os.getuid() or info.st_size > 65536):
+                raise ValueError
+            tokens = json.loads(args.caller_config.read_text())
+            if not isinstance(tokens, dict):
+                raise ValueError
+            app = build_fixture_app(caller_tokens=tokens, port=args.port)
+        except (OSError, ValueError, TypeError):
+            raise RuntimeError("fixture_configuration_invalid") from None
+        uvicorn.run(app, host=args.listen_host, port=args.port,
+                    access_log=False, log_level="warning")
+        return
     try:
         mcp.run()
     except Exception as e:

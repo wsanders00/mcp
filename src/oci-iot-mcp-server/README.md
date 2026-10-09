@@ -563,6 +563,15 @@ The optional [offline runtime contracts](OFFLINE-RUNTIME.md) provide local polic
 fixtures for target bindings and credential generations. They are not connected
 to this server's tools or authentication and do not activate HTTP or OCI access.
 
+The separately selected `--offline-fixture-http --caller-config /private/path/callers.json`
+entry mode exposes five synthetic tools over authenticated Streamable HTTP.
+It cannot invoke OCI. The caller file is a private mode-0600 JSON mapping from
+random ASCII bearer tokens (at least 32 characters) to local caller identifiers.
+Tokens belong in that runtime file, never argv, build contexts or tracked examples.
+The listener defaults to loopback; container tests may bind internally to
+`0.0.0.0` only with host publication on `127.0.0.1`. This mode does not expose
+the existing OCI tools. See [fixture limits](OFFLINE-RUNTIME.md#shared-http-fixture).
+
 Users are responsible for their local environment and credential safety. Different language model
 selections may yield different results and performance.
 

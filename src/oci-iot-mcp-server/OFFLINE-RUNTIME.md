@@ -67,3 +67,29 @@ Managed offline image preparation belongs in the environment repository's
 `tools/oci-iot-runtime`. It packages only these contracts. Approved image build,
 shared authenticated HTTP, native context deferral, actual BOAT/API-key providers,
 OCI metadata reads and database access remain separate increments.
+
+## Shared HTTP fixture
+
+`runtime_http.build_fixture_app` provides only synthetic targets and five fixed
+tools. It has no real provider or OCI call path. An explicit `server.main` flag
+selects it; default stdio behavior is preserved. Runtime caller tokens come from
+an owner-readable regular mode-0600 file, never the image or a tool response.
+The service checks bearer identity, loopback Host/Origin and MCP session ownership
+before tool execution. Session identifiers do not authenticate callers.
+
+Native clients still need disposable multi-client runtime evidence; tool-context
+deferral is a separate gate. Fixture target handles are bound to both caller and
+MCP session. Synthetic BOAT targets share a fake auth context, while the normal
+fixture has another. Startup/listing performs no fake renewal or account work.
+
+FastMCP 3.4.5 lacks a supported external session-removal API. This fixture caps
+successful initializations for the process lifetime (default 32); expiry/DELETE
+revoke access but do not recycle those slots. Restart permits new sessions and
+invalidates previous handles. This bounded fixture policy is not a production
+long-running session-reaping design. It must be settled before deployment.
+
+Container tests publish only `127.0.0.1` and use a private internal network,
+non-root identity, read-only root, dropped capabilities, no-new-privileges,
+bounded memory/CPU/PIDs/logs and a private read-only caller-token volume.
+No host credential directories, projects or Docker socket enter the service.
+All tokens/data in disposable tests are generated local fixtures, not OCI secrets.
