@@ -26,8 +26,12 @@
 
 ### Security
 
+<<<<<<< HEAD
 - Require PyJWT 2.15.1 or newer and urllib3 2.8.0 or newer to address published security advisories. The PyJWT shared-options advisory has no patched release listed; upgrading does not establish that it is resolved.
 - Updated `cryptography` to 50.0.1 to prevent PKCS#7 EnvelopedData decryption from exposing a Bleichenbacher oracle through distinguishable errors and timing (CVE-2026-69247).
+=======
+- Updated locked multidict to 6.9.1; updated locked AnyIO to 4.15.1; updated locked `PyJWT` to 2.15.1 and `urllib3` to 2.8.0; updated `cryptography` to 50.0.1 to prevent PKCS#7 EnvelopedData decryption from exposing a Bleichenbacher oracle through distinguishable errors and timing (CVE-2026-69247).
+>>>>>>> f0f7862bff4b52676354688c9ac8d3fd03a1b1a2
 
 ## 1.0.2
 
