@@ -8,6 +8,7 @@
 
 ### Breaking Changes
 
+- Shared read-only mode now requires absolute OCI config, key, and security-token paths; relative and tilde-style paths fail before authentication.
 - `auto` selects session-token auth only when `security_token_file` is declared directly in the selected profile; a token inherited from `[DEFAULT]` now selects API-key auth. An explicitly selected session-token profile must declare its own token file, and an invalid declared token fails closed instead of falling back to API-key auth.
 - OKE and delegation authentication reject simultaneous token-file and inline-token inputs. OKE no longer gives the inline token precedence.
 

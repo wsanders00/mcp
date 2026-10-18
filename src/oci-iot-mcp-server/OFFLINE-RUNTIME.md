@@ -127,7 +127,9 @@ compartment, one explicit model ID, credential generation, and exactly two
 allowed caller identifiers. The caller-token file must have exactly two
 entries whose caller IDs match that policy set. Policy, OCI config,
 security-token, and private-key files must be
-regular nonsymlink files owned by the service UID with mode `0600`.
+regular nonsymlink files owned by the service UID with mode `0600`. The
+`config_file`, `key_file`, and `security_token_file` paths must be absolute;
+relative and tilde-style paths are rejected before authentication.
 
 The shared HTTP bearer identity is bound to the request context and checked
 against `allowed_callers` before dispatch. The first permitted call builds one

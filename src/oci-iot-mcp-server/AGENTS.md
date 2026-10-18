@@ -30,7 +30,7 @@ Use `moon run oci-iot-mcp-server:test` from the repository root for the inherite
 
 control_plane.py wraps OCI IoT SDK operations; data_plane.py handles IoT data APIs and ORDS token access. resolvers.py and domain_context.py connect friendly selectors/twins to concrete domain endpoints; polling.py and agent_workflows.py compose readiness/lifecycle operations. Local auth.py implements `OCI_IOT_AUTH_TYPE`; client.py caches configured-profile/auth-type clients.
 
-Authentication is implemented locally and the manifest has no Common dependency. Existing OCI SDK authentication requirements remain in [root instructions](../../AGENTS.md#mcp-server-quality-validation) and [Common’s contract](../common/README.md). Recheck credential/client paths before authentication work; this implementation departure grants no exception.
+Profile-backed and principal-based OCI authentication use the declared `oracle-mcp-common` dependency through `build_auth_context()`; the server retains IoT client construction, retry policy, and lifecycle. Shared read-only mode uses Common security-token profile parsing and signer construction after validating its fixed policy. In that mode only, config, key, and security-token paths must be absolute so Common and the policy loader resolve the same files regardless of process cwd. See [Common’s contract](../common/README.md) and the [root instructions](../../AGENTS.md#mcp-server-quality-validation).
 
 ## Security and secrets handling
 
@@ -42,8 +42,7 @@ Friendly identifier rules, domain endpoint derivation, token/cache behavior, pol
 
 ## Known gaps
 
-- Local OCI credential resolution is outside Common. This pass records the departure without migrating authentication.
-- Local auto auth catches a configured security-token failure and falls back to API-key auth, differing from Common’s fail-closed profile contract. Recheck auth.py and Common before any auth change.
+- The IoT compatibility wrapper retains aliases and authentication-mode selection around Common’s `build_auth_context()` contract. Shared read-only mode uses an explicit Common security-token profile and requires absolute credential paths to keep validation and Common file use aligned.
 - Source definitions and available tests do not establish passing validation or live security/transport behavior. Record actual checks separately through the [shared evidence routes](../../docs/agent-development.md#evidence-and-context-routes).
 
 ## Workflow and context routing

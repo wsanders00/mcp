@@ -96,6 +96,8 @@ def load_read_policy(path: Path) -> ReadPolicy:
                 or len(set(raw["allowed_callers"])) != len(raw["allowed_callers"])):
             raise ValueError
         config_path = Path(raw["config_file"])
+        if not config_path.is_absolute():
+            raise ValueError
         config_bytes = _read_private(config_path)
         if len(config_bytes) > 65536:
             raise ValueError
@@ -108,14 +110,14 @@ def load_read_policy(path: Path) -> ReadPolicy:
             raise ValueError
         token_path = Path(token_file)
         if not token_path.is_absolute():
-            token_path = config_path.parent / token_path
+            raise ValueError
         _read_private(token_path, limit=1024 * 1024)
         key_file = config[raw["profile"]].get("key_file")
         if not key_file:
             raise ValueError
         key_path = Path(key_file)
         if not key_path.is_absolute():
-            key_path = config_path.parent / key_path
+            raise ValueError
         _read_private(key_path, limit=1024 * 1024)
         return ReadPolicy(
             region=raw["region"], profile=raw["profile"], config_file=config_path,

@@ -60,8 +60,10 @@ owned by the service UID with mode `0600`. Its fields are `region`, `profile`,
 `allowed_callers`. The fixed grant requires exactly one model ID and two
 distinct caller IDs. The caller-token file must contain exactly two entries,
 with those same caller IDs. The referenced OCI config, security token, and private key
-must also be regular files owned by that UID with mode `0600`. The profile
-must provide a security-token credential. Do not place real identifiers or
+must also be regular files owned by that UID with mode `0600`. All three paths
+must be absolute; relative and tilde-style paths are rejected before
+credential or client construction. The profile must provide a security-token
+credential. Do not place real identifiers or
 credential paths in checked-in policy examples.
 
 ```sh
