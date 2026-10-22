@@ -170,6 +170,38 @@ For ORDS-backed operator tools, set:
 - String-returning tools such as `get_digital_twin_instance_content` and `get_digital_twin_model_spec`
   return plain text content.
 
+## IoT Resource Lifecycle Guidance
+
+### Domain group types
+
+Choose `PRODUCTION` or `DEVELOPMENT` for new groups. OCI selects `DEVELOPMENT`
+when type is omitted. Changing type requires a new group. Existing `STANDARD`
+and `LIGHTWEIGHT` groups continue working until 2027-04-14. The tools preserve
+supplied type values; this is not a promise that OCI accepts new legacy groups.
+See [Creating an IoT Domain Group](https://docs.oracle.com/en-us/iaas/Content/internet-of-things/create-domain-group.htm).
+
+### Deleting an IoT domain
+
+OCI prevents domain deletion while active digital twin resources remain. Delete
+associated instances before requesting domain deletion. `delete_iot_domain`
+performs no automatic resource cleanup. Separately, Oracle's operation
+dependencies require the parent domain group to be `ACTIVE`; that prerequisite
+does not replace the active-resource restriction. See the
+[June 9, 2026 release note](https://docs.oracle.com/en-us/iaas/releasenotes/internet-of-things/update-06092026.htm)
+and [Operation Dependencies](https://docs.oracle.com/en-us/iaas/Content/internet-of-things/iot-lifecycle-operations.htm).
+
+### Upgrading a digital twin model
+
+For an additive upgrade, follow Oracle's next-minor workflow (for example, `1`
+to `1.1`) while preserving existing contracts. Create the corresponding adapter,
+then update the existing instance. Instance updates require the same DTMI path
+and major version and a compatible same or higher minor version. Breaking or
+major-version changes require a new instance; downgrades are unsupported. OCI
+checks compatibility; these tools neither validate it locally nor migrate
+instances automatically. See the
+[compatible model upgrade scenario](https://docs.oracle.com/en-us/iaas/Content/internet-of-things/create-new-model-version.htm)
+and [Updating a Digital Twin Instance](https://docs.oracle.com/en-us/iaas/Content/internet-of-things/update-digital-twin-instance.htm).
+
 ## Agent Workflow Guidance
 
 - `get_twin_platform_context` is the best first call when an agent needs to understand how a twin maps to

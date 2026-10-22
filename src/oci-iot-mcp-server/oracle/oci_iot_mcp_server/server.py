@@ -1306,7 +1306,9 @@ def list_iot_domain_groups(
     id: Annotated[Optional[str], "Filter by IoT domain group identifier"] = None,
     display_name: Annotated[Optional[str], "Filter by display name"] = None,
     lifecycle_state: Annotated[Optional[str], "Filter by lifecycle state"] = None,
-    type: Annotated[Optional[str], "Filter by IoT domain group type"] = None,
+    type: Annotated[Optional[str], ("Filter by group type: PRODUCTION or DEVELOPMENT. Existing STANDARD and LIGHTWEIGHT "
+        "groups continue working until 2027-04-14. Supplied values are forwarded unchanged to the "
+        "OCI SDK.")] = None,
     page: Annotated[Optional[str], "Page token for a single SDK list page"] = None,
     limit: Annotated[Optional[int], "The limit of results"] = None,
     sort_order: Annotated[Optional[str], "Sort order"] = None,
@@ -1422,14 +1424,16 @@ def list_work_requests(
 
 
 @tool(
-    description="Creates a new digital twin model in a specified IoT domain."
+    description=("Creates a digital twin model in an IoT domain. Additive upgrades follow Oracle's "
+        "compatible next-minor-version workflow; OCI checks compatibility.")
 )
 def create_digital_twin_model(
     iot_domain_id: Annotated[str, "The IoT domain identifier"],
     display_name: Annotated[str, "A user-friendly display name for the digital twin model"],
     spec: Annotated[
         dict[str, Any] | str,
-        "The DTDL v3 digital twin model specification as a JSON object or JSON string",
+        ("The DTDL v3 specification as a JSON object or JSON string. This tool does not validate "
+        "model compatibility locally."),
     ],
     description: Annotated[Optional[str], "A short description of the digital twin model"] = None,
     freeform_tags: Annotated[Optional[dict[str, str] | str], "Free-form tags as an object or JSON string"] = None,
@@ -1466,7 +1470,8 @@ def create_digital_twin_model(
 
 
 @tool(
-    description="Creates a new digital twin adapter in a specified IoT domain."
+    description=("Creates a digital twin adapter in an IoT domain. For a compatible model upgrade, create "
+        "the new adapter before updating the existing instance.")
 )
 def create_digital_twin_adapter(
     iot_domain_id: Annotated[str, "The IoT domain identifier"],
@@ -1853,7 +1858,9 @@ def update_digital_twin_adapter(
 
 
 @tool(
-    description="Updates a specific digital twin instance by its identifier."
+    description=("Updates a digital twin instance by its identifier. Model changes require the same DTMI "
+        "path and major version, with a compatible same or higher minor version. OCI checks "
+        "compatibility; downgrades are unsupported.")
 )
 def update_digital_twin_instance(
     digital_twin_instance_id: Annotated[str, "The digital twin instance identifier"],
@@ -2073,11 +2080,14 @@ def create_iot_domain(
 
 
 @tool(
-    description="Creates a new IoT domain group in a specified compartment."
+    description=("Creates an IoT domain group in a compartment. Use PRODUCTION or DEVELOPMENT; OCI "
+        "defaults to DEVELOPMENT when type is omitted. The group type cannot be changed after "
+        "creation.")
 )
 def create_iot_domain_group(
     compartment_id: Annotated[str, "The compartment identifier where the IoT domain group will be created"],
-    type: Annotated[Optional[str], "The IoT domain group type, such as STANDARD or LIGHTWEIGHT"] = None,
+    type: Annotated[Optional[str], ("Group type: PRODUCTION or DEVELOPMENT. Omit to use the OCI service default. Supplied "
+        "values are forwarded unchanged to the OCI SDK.")] = None,
     display_name: Annotated[Optional[str], "A user-friendly display name for the IoT domain group"] = None,
     description: Annotated[Optional[str], "A short description of the IoT domain group"] = None,
     freeform_tags: Annotated[Optional[dict[str, str] | str], "Free-form tags as an object or JSON string"] = None,
@@ -2445,7 +2455,9 @@ def update_iot_domain_group(
 
 
 @tool(
-    description="Deletes a specific IoT domain by its identifier."
+    description=("Deletes an IoT domain by its identifier. OCI rejects deletion while active digital twin "
+        "resources remain. Delete associated digital twin instances first; this tool does not "
+        "delete them automatically.")
 )
 def delete_iot_domain(
     iot_domain_id: Annotated[str, "The IoT domain identifier"],

@@ -1289,7 +1289,8 @@ def test_list_digital_twin_adapter_and_model_pages_return_metadata(monkeypatch):
     }
 
 
-def test_domain_group_domain_and_work_request_list_tools_forward_sdk_filters(monkeypatch):
+@pytest.mark.parametrize("group_type", [None, "PRODUCTION", "DEVELOPMENT", "STANDARD", "LIGHTWEIGHT", "unknown"])
+def test_domain_group_domain_and_work_request_list_tools_forward_sdk_filters(monkeypatch, group_type):
     captured = {}
 
     def list_groups(**kwargs):
@@ -1313,7 +1314,7 @@ def test_domain_group_domain_and_work_request_list_tools_forward_sdk_filters(mon
         id="group-1",
         display_name="Group 1",
         lifecycle_state="ACTIVE",
-        type="STANDARD",
+        type=group_type,
         page="group-page",
         limit=25,
         sort_order="ASC",
@@ -1353,7 +1354,7 @@ def test_domain_group_domain_and_work_request_list_tools_forward_sdk_filters(mon
             "id": "group-1",
             "display_name": "Group 1",
             "lifecycle_state": "ACTIVE",
-            "type": "STANDARD",
+            "type": group_type,
             "page": "group-page",
             "limit": 25,
             "sort_order": "ASC",
@@ -1810,11 +1811,13 @@ RESPONSE_TOOL_CASES = [
 @pytest.mark.parametrize("case", RESPONSE_TOOL_CASES, ids=lambda case: case["tool_name"])
 def test_response_mutation_tools_return_response_metadata(monkeypatch, case):
     captured = {}
+    calls = []
     if "constructor_name" in case:
         monkeypatch.setattr(server.oci.iot.models, case["constructor_name"], _detail_factory(case["constructor_name"]))
 
     def method(**kwargs):
         captured.update(kwargs)
+        calls.append(kwargs)
         return _response(status=202, request_id="req-123", headers={"etag": "etag-1"}, data={"ok": True})
 
     monkeypatch.setattr(server, "get_iot_client", lambda: SimpleNamespace(**{case["client_method"]: method}))
@@ -1834,6 +1837,9 @@ def test_response_mutation_tools_return_response_metadata(monkeypatch, case):
             assert getattr(details, key) == value
     for key, value in case["expected_client_kwargs"].items():
         assert captured[key] == value
+
+    if case["tool_name"] == "delete_iot_domain":
+        assert calls == [case["expected_client_kwargs"]]
 
 
 @pytest.mark.parametrize(
@@ -2160,3 +2166,38 @@ def test_direct_data_api_tool_returns_missing_access_token_error(monkeypatch):
 
     assert result["ok"] is False
     assert result["error"]["code"] == "missing_access_token"
+
+
+@pytest.mark.parametrize("group_type", [None, "PRODUCTION", "DEVELOPMENT", "STANDARD", "LIGHTWEIGHT", "unknown"])
+def test_create_iot_domain_group_passes_type_to_oci_unchanged(monkeypatch, group_type):
+    calls = []
+    monkeypatch.setattr(server.oci.iot.models, "CreateIotDomainGroupDetails", _detail_factory("group"))
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(data=_simple_model("group-1"))
+
+    monkeypatch.setattr(server, "get_iot_client", lambda: SimpleNamespace(create_iot_domain_group=create))
+    kwargs = {} if group_type is None else {"type": group_type}
+    assert server.create_iot_domain_group(compartment_id="compartment-1", **kwargs)["id"] == "group-1"
+    assert len(calls) == 1
+    assert calls[0]["create_iot_domain_group_details"].type == group_type
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_registered_metadata_and_optional_group_types():
+    tools = {tool.name: tool for tool in await server.mcp.list_tools()}
+    assert tools['list_iot_domain_groups'].parameters["properties"]['type']["description"] == 'Filter by group type: PRODUCTION or DEVELOPMENT. Existing STANDARD and LIGHTWEIGHT groups continue working until 2027-04-14. Supplied values are forwarded unchanged to the OCI SDK.'
+    assert tools['create_iot_domain_group'].description == 'Creates an IoT domain group in a compartment. Use PRODUCTION or DEVELOPMENT; OCI defaults to DEVELOPMENT when type is omitted. The group type cannot be changed after creation.'
+    assert tools['create_iot_domain_group'].parameters["properties"]['type']["description"] == 'Group type: PRODUCTION or DEVELOPMENT. Omit to use the OCI service default. Supplied values are forwarded unchanged to the OCI SDK.'
+    assert tools['create_digital_twin_model'].description == "Creates a digital twin model in an IoT domain. Additive upgrades follow Oracle's compatible next-minor-version workflow; OCI checks compatibility."
+    assert tools['create_digital_twin_model'].parameters["properties"]['spec']["description"] == 'The DTDL v3 specification as a JSON object or JSON string. This tool does not validate model compatibility locally.'
+    assert tools['create_digital_twin_adapter'].description == 'Creates a digital twin adapter in an IoT domain. For a compatible model upgrade, create the new adapter before updating the existing instance.'
+    assert tools['update_digital_twin_instance'].description == 'Updates a digital twin instance by its identifier. Model changes require the same DTMI path and major version, with a compatible same or higher minor version. OCI checks compatibility; downgrades are unsupported.'
+    assert tools['delete_iot_domain'].description == 'Deletes an IoT domain by its identifier. OCI rejects deletion while active digital twin resources remain. Delete associated digital twin instances first; this tool does not delete them automatically.'
+    for name in ("list_iot_domain_groups", "create_iot_domain_group"):
+        schema = tools[name].parameters
+        group_type = schema["properties"]["type"]
+        assert group_type["anyOf"] == [{"type": "string"}, {"type": "null"}]
+        assert group_type["default"] is None
+        assert "type" not in schema.get("required", [])
