@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Document the immutable Moon bootstrap and project-local launcher for development setup.
+- Document the immutable Moon lock and repository setup for development.
 
 ### Added
 

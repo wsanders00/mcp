@@ -78,35 +78,32 @@ same configured read-only sandbox permission to each listed caller.
 
 ## Development
 
-From the outer maintenance project root, use its launcher to install Moon from
-the repository's immutable `.protolock` and set up the pinned toolchains:
+From the repository root (`mcp/`), install Moon from the immutable `.protolock`
+and set up the pinned toolchains:
 
 ```sh
-scripts/mcp-local proto install moon --immutable-lockfile
-scripts/mcp-local moon setup
-scripts/mcp-local uv sync --project src/oci-iot-mcp-server --locked --all-extras --dev
+proto install moon --immutable-lockfile
+moon setup
+uv sync --project src/oci-iot-mcp-server --locked --all-extras --dev
 ```
 
-The launcher uses project-local proto/cache stores. Keep the previously
-installed Moon version available; the immutable lock selects the repository's
-platform-specific Moon version.
-
-Make the pinned Python version available before syncing. The IoT project uses
-the repository's `src/common` checkout for `oracle-mcp-common` during local
-workspace development. Built distributions declare the published
+The immutable lock selects the platform-specific Moon version. Make the pinned
+Python version available before syncing. The IoT project uses the repository's
+`src/common` checkout for `oracle-mcp-common` during local workspace
+development. Built distributions declare the published
 `oracle-mcp-common` dependency instead.
 
 Run the focused unit tests with branch coverage; the package enforces a 90%
 coverage minimum:
 
 ```sh
-scripts/mcp-local moon run oci-iot-mcp-server:test
+moon run oci-iot-mcp-server:test
 ```
 
 Check the lockfile and packaging with:
 
 ```sh
-scripts/mcp-local moon run oci-iot-mcp-server:lock-check oci-iot-mcp-server:install-check
+moon run oci-iot-mcp-server:lock-check oci-iot-mcp-server:install-check
 ```
 
 The install check runs the tests and builds and installs the distribution. Run
