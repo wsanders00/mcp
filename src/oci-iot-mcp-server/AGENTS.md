@@ -20,7 +20,7 @@ This package owns IoT control-plane resources, domain/twin resolution, data-plan
 
 ## Setup / build / run
 
-From the repository root, use `proto install` for pinned tools and `moon run oci-iot-mcp-server:build` for packaging. The [manifest](pyproject.toml) requires Python `>=3.13`. Read the local [README](README.md) and server `main()` for runtime transport/configuration; startup can access real services. See the [shared validation map](../../docs/agent-development.md#validation-map) for command definitions and check scope.
+From the outer maintenance project root, use `scripts/mcp-local proto install moon --immutable-lockfile` followed by `scripts/mcp-local moon setup`. This installs Moon from the repository's platform-specific `.protolock` using project-local stores. Use `scripts/mcp-local moon run oci-iot-mcp-server:build` for packaging. The [manifest](pyproject.toml) requires Python `>=3.13`. Read the local [README](README.md) and server `main()` for runtime transport/configuration; startup can access real services. See the [shared validation map](../../docs/agent-development.md#validation-map) for command definitions and check scope.
 
 ## Tests and validation
 

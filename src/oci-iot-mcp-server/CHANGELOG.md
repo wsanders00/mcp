@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Document the immutable Moon bootstrap and project-local launcher for development setup.
+
 ### Added
 
 - Add an authenticated shared HTTP read-only mode with policy-bound IoT domain and digital-twin model GET access.
