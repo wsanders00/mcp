@@ -1,5 +1,5 @@
 import base64
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from oci.iot.models import (
     InvokeRawBinaryCommandDetails,
@@ -711,6 +711,58 @@ def list_iot_domains_records(
         **{key: value for key, value in kwargs.items() if value is not None},
     )
 
+
+def _list_iot_domains_page_record(*, compartment_id: str, page: str | None = None) -> dict:
+    return _map_page(
+        "list_iot_domains", map_iot_domain,
+        **{key: value for key, value in {
+            "compartment_id": compartment_id, "page": page, "limit": 100,
+        }.items() if value is not None},
+    )
+
+
+class _IncompleteLookup(Exception):
+    def __init__(self, reason: str, pages_fetched: int, rows_fetched: int):
+        self.details = {"reason": reason, "pages_fetched": pages_fetched,
+                        "rows_fetched": rows_fetched}
+        super().__init__(reason)
+
+
+def _iter_friendly_lookup_records(fetch_page: Callable[..., dict], **scope) -> Iterator[dict]:
+    """Bound only friendly lookup traversal; never treat a partial scan as exhausted."""
+    page = None
+    requested_pages = {None}
+    rows_fetched = 0
+    for pages_fetched in range(1, 101):
+        payload = fetch_page(**scope, page=page)
+        rows = payload["items"]
+        rows_fetched += len(rows)
+        if rows_fetched > 10_000:
+            raise _IncompleteLookup("resource_limit", pages_fetched, rows_fetched)
+        yield from rows
+        next_page = payload.get("opc_next_page")
+        if not next_page:
+            return
+        if next_page in requested_pages:
+            raise _IncompleteLookup("repeated_token", pages_fetched, rows_fetched)
+        if rows_fetched == 10_000:
+            raise _IncompleteLookup("resource_limit", pages_fetched, rows_fetched)
+        if pages_fetched == 100:
+            raise _IncompleteLookup("page_limit", pages_fetched, rows_fetched)
+        requested_pages.add(next_page)
+        page = next_page
+
+
+def _iter_iot_domains_for_selector(*, compartment_id: str) -> Iterator[dict]:
+    return _iter_friendly_lookup_records(
+        _list_iot_domains_page_record, compartment_id=compartment_id,
+    )
+
+
+def _iter_twin_instances_for_selector(*, iot_domain_id: str) -> Iterator[dict]:
+    return _iter_friendly_lookup_records(
+        list_digital_twin_instances_page_record, iot_domain_id=iot_domain_id, limit=100,
+    )
 
 def list_work_request_errors_records(*, work_request_id: str) -> list[dict]:
     return _map_many("list_work_request_errors", map_work_request_error, work_request_id=work_request_id)

@@ -1,14 +1,35 @@
 from .control_plane import (
+    _IncompleteLookup,
+    _iter_iot_domains_for_selector,
+    _iter_twin_instances_for_selector,
     get_digital_twin_instance_record,
     list_digital_twin_instances_records,
-    list_iot_domains_records,
 )
-from .errors import ambiguity_error, invalid_input_error, not_found_error
+from .errors import ambiguity_error, error_result, invalid_input_error, not_found_error
 from .tool_models import success_result
 
 
 def _first_label(host: str | None) -> str | None:
     return host.split(".", 1)[0] if host else None
+
+
+def _select_friendly_matches(rows, predicate, resource_type):
+    matches = {}
+    try:
+        for row in rows:
+            if predicate(row) and row["id"] not in matches:
+                matches[row["id"]] = row
+                if len(matches) == 2:
+                    break
+    except _IncompleteLookup as exc:
+        return [], error_result(
+            code="incomplete_lookup",
+            message="Friendly lookup could not complete within its pagination safeguards.",
+            resource_type=resource_type,
+            retry_hint="Retry with the OCID of the intended resource.",
+            details=exc.details,
+        )
+    return list(matches.values()), None
 
 
 def resolve_domain_selector(
@@ -32,14 +53,17 @@ def resolve_domain_selector(
             retry_hint="Retry with iot_domain_id or include compartment_id.",
         )
 
-    matches = []
-    for row in list_iot_domains_records(compartment_id=compartment_id):
-        if iot_domain_display_name and row.get("name") == iot_domain_display_name:
-            matches.append(row)
-        if domain_short_id and _first_label(row.get("device_host")) == domain_short_id:
-            matches.append(row)
-
-    unique_matches = list({row["id"]: row for row in matches}.values())
+    unique_matches, error = _select_friendly_matches(
+        _iter_iot_domains_for_selector(compartment_id=compartment_id)
+        if iot_domain_display_name or domain_short_id else (),
+        lambda row: (
+            bool(iot_domain_display_name and row.get("name") == iot_domain_display_name)
+            or bool(domain_short_id and _first_label(row.get("device_host")) == domain_short_id)
+        ),
+        "iot_domain",
+    )
+    if error:
+        return error
     if not unique_matches:
         return not_found_error(
             resource_type="iot_domain",
@@ -90,11 +114,21 @@ def resolve_twin_selector(
             retry_hint="Retry with digital_twin_instance_id or include iot_domain_id.",
         )
 
-    matches = [
-        row
-        for row in list_digital_twin_instances_records(iot_domain_id=iot_domain_id)
-        if row.get("name") == digital_twin_instance_name
-    ]
+    if not digital_twin_instance_name:
+        # Preserve the direct helper's legacy missing-name, single-page behavior.
+        matches = [
+            row
+            for row in list_digital_twin_instances_records(iot_domain_id=iot_domain_id)
+            if row.get("name") == digital_twin_instance_name
+        ]
+    else:
+        matches, error = _select_friendly_matches(
+            _iter_twin_instances_for_selector(iot_domain_id=iot_domain_id),
+            lambda row: row.get("name") == digital_twin_instance_name,
+            "digital_twin_instance",
+        )
+        if error:
+            return error
     if not matches:
         return not_found_error(
             resource_type="digital_twin_instance",

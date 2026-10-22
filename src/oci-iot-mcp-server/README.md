@@ -274,8 +274,16 @@ Count relationship topology across bounded pages:
   can scope the control-plane search before returning a short identifier.
 - Twin display-name lookup requires the IoT domain selector to resolve first; the twin lookup never
   runs without an identified domain context.
-- Ambiguous friendly matches fail with `ambiguous_identifier` and list candidate identifiers so
-  the caller can prompt for a retry with a specific choice.
+- Friendly lookup requests 100 rows per page and scans at most 100 pages or 10,000 returned
+  rows (including duplicate IDs and empty pages toward the page limit). Additional pages add
+  control-plane calls and latency. A unique match or absence is reported only after normal
+  pagination exhaustion within those budgets, including exactly 10,000 rows on a final page.
+- Two distinct matching IDs prove ambiguity; `ambiguous_identifier` returns the first two
+  candidates in encounter order and may stop before exhausting the scope. Duplicate IDs are
+  counted toward the scan budget but do not create ambiguity.
+- Remaining continuation at a budget limit, an oversized response, or a repeated continuation
+  token returns `incomplete_lookup` with sanitized page/row counts and OCID retry guidance.
+  Retry with an explicit OCID when friendly lookup cannot establish uniqueness or absence.
 - Short IDs are derived from the control-plane resources instead of being memorized; helpers such as
   `get_data_api_token` and `derive_domain_context` can surface those identifiers once the related
   domain context is resolved.
