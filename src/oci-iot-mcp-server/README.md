@@ -652,3 +652,37 @@ Copyright (c) 2025 Oracle and/or its affiliates.
 
 Released under the Universal Permissive License v1.0 as shown at
 <https://oss.oracle.com/licenses/upl/>.
+
+
+## Full-registry shared HTTP (native staging)
+
+The opt-in `--shared-http --caller-config /absolute/private/callers.json
+--environment-config /absolute/complete/config.toml --service-identity HASH`
+entry point exposes the existing 72 tools through their normal handlers on
+loopback. Caller files retain private owner/type/mode validation and bearer,
+Host and Origin checks. Ordinary stdio and the previous read-only mode remain
+available. Staging these sources does not replace a running service.
+
+The complete upstream token-manager TOML selects `[oci].config_file` and
+`resource_profile_name`. Security-token authentication requires directly declared
+token/key references; OCI default region comes from that operational profile,
+not the manager's session region. Common constructs the signer, then the service
+initializes IoT and Identity clients before serving requests. Selection or
+credential-file metadata drift refuses dispatch until explicit restart/switch.
+There is no watcher or automatic authentication/renewal. The operator maintains
+credentials with existing upstream token-manager controls; same-identity refresh
+requires one explicit restart to clear signer/client/ORDS caches.
+
+This environment binding is not a compartment, resource or region fence. Normal
+handlers retain their selectors, including Data API region. Data API/ORDS inputs
+are independent of OCI security-token auth. `get_data_api_token` normally returns
+a bearer credential; actual invocation needs specific credential-handling
+authority. Full exposure does not authorize calls, writes or token retrieval.
+Missing/expired OCI credentials provide bounded token-mgr/restart guidance;
+permission/resource errors must not trigger reauthentication.
+
+Host-owned native packaging, promotion, explicit `codex --oracle` selection,
+service lifetime and transition approval are documented in the host runtime
+README. Native staging pins published Common 0.1.3, FastMCP 3.4.5 and Python
+3.13.15 for Mac ARM64. Offline tests use synthetic credentials and mocked calls;
+they establish no current cloud readiness.

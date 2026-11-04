@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Add opt-in full-registry shared HTTP with loopback bearer/Host/Origin checks, authenticated service binding, initialized Common OCI context and auth drift refusal. Native service staging is separate from deployment; owner refresh requires an explicit restart.
+
 ### Fixed
 
 - Resolve friendly domain names/short IDs and twin names across SDK pages instead of claiming absence or uniqueness from the first page. Lookup requests 100 rows per page, bounded by 100 pages or 10,000 returned rows; incomplete or repeated-token scans fail with `incomplete_lookup` and OCID retry guidance. Additional list calls add latency. Ambiguity may return early with only the first two distinct matching candidates; public list-tool shapes are unchanged.

@@ -30,11 +30,12 @@ class _CloudDisabled(Middleware):
 class _AuthenticatedHTTP:
     """Bearer-authenticate local HTTP requests before reaching FastMCP."""
 
-    def __init__(self, app, tokens: Mapping[str, str], port: int, readonly=False):
+    def __init__(self, app, tokens: Mapping[str, str], port: int, readonly=False, binding=None):
         self.app = app
         self.tokens = dict(tokens)
         self.hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
         self.readonly = readonly
+        self.binding = binding
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -83,12 +84,24 @@ class _AuthenticatedHTTP:
             )(scope, receive, send)
             return
 
+        if scope["path"] == "/binding" and self.binding is not None:
+            if scope["method"] != "GET":
+                await PlainTextResponse("method not allowed", status_code=405)(scope, receive, send)
+                return
+            try:
+                value = self.binding()
+            except RuntimeError:
+                await PlainTextResponse("OCI context changed or unavailable; explicit restart required", status_code=409)(scope, receive, send)
+                return
+            await JSONResponse(value)(scope, receive, send)
+            return
+
         if scope["path"] == "/healthz":
             if scope["method"] != "GET":
                 await PlainTextResponse("method not allowed", status_code=405)(scope, receive, send)
                 return
             await JSONResponse({
-                "cloud_access": "read_only" if self.readonly else "disabled",
+                "cloud_access": "full" if self.binding is not None else "read_only" if self.readonly else "disabled",
                 "tool_count": SUPPORTED_TOOL_COUNT,
                 **({"enabled_tools": ["get_digital_twin_model", "get_iot_domain"]}
                    if self.readonly else {}),
@@ -176,3 +189,48 @@ def build_shared_readonly_http_app(
         allowed_origins=[f"http://127.0.0.1:{port}", f"http://localhost:{port}"],
     )
     return _AuthenticatedHTTP(app, caller_tokens, port, readonly=True)
+
+
+class _BoundDispatch(Middleware):
+    def __init__(self, clients):
+        self.clients = clients
+
+    async def on_call_tool(self, context: MiddlewareContext, call_next: CallNext):
+        from .auth import SharedAuthError
+        try:
+            self.clients.guard()
+        except SharedAuthError as error:
+            raise ToolError(str(error)) from None
+        try:
+            return await call_next(context)
+        finally:
+            try:
+                self.clients.guard()
+            except SharedAuthError:
+                raise ToolError('OCI context changed during dispatch; the operation may already have occurred. Explicit restart or switch required.') from None
+
+
+def build_full_shared_http_app(mcp: FastMCP, *, caller_tokens: Mapping[str, str],
+                               environment_config: Path, service_identity: str, port: int = 8765):
+    """Expose the existing registry/handlers with a single bound SDK context."""
+    from .client import initialize_shared_clients
+
+    if (not caller_tokens or any(not isinstance(token, str) or _TOKEN_PATTERN.fullmatch(token) is None
+                                or not isinstance(caller, str) or not caller.strip()
+                                for token, caller in caller_tokens.items())
+            or not isinstance(service_identity, str) or not service_identity
+            or isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535):
+        raise ValueError('shared_http_configuration_invalid')
+    if any(isinstance(item, (_CloudDisabled, _BoundDispatch)) for item in mcp.middleware):
+        raise ValueError('Shared HTTP mode already configured; use a fresh process.')
+    clients = initialize_shared_clients(environment_config)
+    mcp.add_middleware(_BoundDispatch(clients))
+
+    def binding():
+        clients.guard()
+        return {'version': 1, 'service_identity': service_identity, 'auth_binding': clients.identity}
+
+    app = mcp.http_app(path='/mcp', transport='streamable-http', stateless_http=True,
+                       allowed_hosts=[f'127.0.0.1:{port}', f'localhost:{port}'],
+                       allowed_origins=[f'http://127.0.0.1:{port}', f'http://localhost:{port}'])
+    return _AuthenticatedHTTP(app, caller_tokens, port, binding=binding)

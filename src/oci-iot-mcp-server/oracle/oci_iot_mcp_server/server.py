@@ -34,7 +34,7 @@ from .auth import (
     resolved_auth_type,
     resolved_profile_name,
 )
-from .client import get_iot_client
+from .client import get_iot_client, get_shared_clients
 from .control_plane import (
     get_digital_twin_adapter_record,
     get_digital_twin_instance_content_record,
@@ -166,6 +166,9 @@ def get_identity_client(
     profile_name: Annotated[Optional[str], "Stored/Authenticated OCI Profile"] = None,
     auth_type: Annotated[Optional[str], "OCI authentication type override"] = None,
 ):
+    shared = get_shared_clients(profile_name, auth_type)
+    if shared is not None:
+        return shared.identity_client, shared.identity["tenancy"]
     resolved_profile = resolved_profile_name(profile_name)
     resolved_type = resolved_auth_type(auth_type)
     try:
@@ -3290,6 +3293,28 @@ def health_check():
 
 def main():
     """Main function to run the MCP server."""
+    if "--shared-http" in sys.argv[1:]:
+        import argparse
+        from pathlib import Path
+        import uvicorn
+        from .shared_http import build_full_shared_http_app, load_caller_tokens
+
+        parser = argparse.ArgumentParser(description="Authenticated full IoT HTTP service")
+        parser.add_argument("--shared-http", action="store_true", required=True)
+        parser.add_argument("--caller-config", type=Path, required=True)
+        parser.add_argument("--environment-config", type=Path, required=True)
+        parser.add_argument("--service-identity", required=True)
+        parser.add_argument("--listen-host", choices=("127.0.0.1",), default="127.0.0.1")
+        parser.add_argument("--listen-port", type=int, default=8765)
+        args = parser.parse_args()
+        app = build_full_shared_http_app(
+            mcp, caller_tokens=load_caller_tokens(args.caller_config),
+            environment_config=args.environment_config, service_identity=args.service_identity,
+            port=args.listen_port,
+        )
+        uvicorn.run(app, host=args.listen_host, port=args.listen_port,
+                    access_log=False, log_level="warning")
+        return
     if "--shared-http-read-only" in sys.argv[1:]:
         import argparse
         from pathlib import Path
