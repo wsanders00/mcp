@@ -88,10 +88,10 @@ uv sync --project src/oci-iot-mcp-server --locked --all-extras --dev
 ```
 
 The immutable lock selects the platform-specific Moon version. Make the pinned
-Python version available before syncing. The IoT project uses the repository's
-`src/common` checkout for `oracle-mcp-common` during local workspace
-development. Built distributions declare the published
-`oracle-mcp-common` dependency instead.
+Python version available before syncing. Local development and built
+distributions both use published `oracle-mcp-common` 0.1.x, which supports the
+server's FastMCP 3.4.10 pin. The Common 0.3 checkout in this repository requires
+FastMCP 4.
 
 Run the focused unit tests with branch coverage; the package enforces a 90%
 coverage minimum:

@@ -8,12 +8,12 @@ import difflib
 import inspect
 import json
 import os
-import pkgutil
 import re
+from copy import copy
 from functools import lru_cache
-from importlib import import_module
 from itertools import islice
 from logging import Logger
+from types import ModuleType
 from typing import Annotated, Any, Callable, Dict, List, Literal, Optional, Tuple, get_args, get_origin
 
 import oci
@@ -174,13 +174,30 @@ def _candidate_model_class_names(operation_name: str, param_name: str) -> List[s
     return _dedupe_preserve_order(candidates)
 
 
+def _get_service_module(service_name: str) -> ModuleType:
+    # Only the SDK's own exports may select a service import.
+    if service_name.startswith("_") or service_name not in getattr(oci, "__all__", ()):
+        raise ValueError("Unknown OCI SDK service")
+    service = getattr(oci, service_name)
+    if not isinstance(service, ModuleType) or "models" not in vars(service).get("__all__", ()):
+        raise ValueError("Expected an OCI SDK service with exported models")
+    return service
+
+
 def _get_client_class(client_fqn: str) -> Any:
-    _validate_client_fqn(client_fqn)
-    module_name, class_name = client_fqn.rsplit(".", 1)
-    module = import_module(module_name)
-    cls = getattr(module, class_name)
-    if not inspect.isclass(cls):
-        raise ValueError(f"{client_fqn} is not a class")
+    _validate_client_fqn(client_fqn, require_client_class=True)
+    parts = client_fqn.split(".")
+    if len(parts) not in (3, 4):
+        raise ValueError("client_fqn must reference an exported OCI SDK service client")
+    service = _get_service_module(parts[1])
+    class_name = parts[-1]
+    cls = vars(service).get(class_name)
+    if class_name not in service.__all__ or not inspect.isclass(cls):
+        raise ValueError("client_fqn must reference an exported OCI SDK service client class")
+    if not cls.__module__.startswith(f"{service.__name__}.") or client_fqn not in {
+        f"{service.__name__}.{class_name}", f"{cls.__module__}.{cls.__name__}",
+    }:
+        raise ValueError("client_fqn does not match the exported OCI SDK client identity")
     return cls
 
 
@@ -231,25 +248,18 @@ def _signature_to_display(operation_name: str, signature) -> str:
 
 
 def _import_models_module_from_client_fqn(client_fqn: str):
-    module_name = client_fqn.rsplit(".", 1)[0]
-    candidates: List[str] = [f"{module_name}.models"]
-    if module_name.count(".") >= 2:
-        parent_module = module_name.rsplit(".", 1)[0]
-        candidates.append(f"{parent_module}.models")
-
-    for candidate in _dedupe_preserve_order(candidates):
-        try:
-            return import_module(candidate)
-        except Exception:
-            continue
-    return None
+    cls = _get_client_class(client_fqn)
+    return _get_service_module(cls.__module__.split(".")[1]).models
 
 
 def _resolve_model_class(models_module: Any, class_name: str):
-    try:
-        return getattr(models_module, class_name)
-    except Exception:
+    if models_module is None or not isinstance(class_name, str):
         return None
+    namespace = vars(models_module).get("__name__", "").split(".")
+    if len(namespace) != 3 or namespace[0] != "oci" or namespace[2] != "models":
+        return None
+    cls = vars(models_module).get(f"{namespace[1]}_type_mapping", {}).get(class_name)
+    return cls if inspect.isclass(cls) else None
 
 
 def _get_model_schema_maps(model_class: Any) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
@@ -275,27 +285,43 @@ def _get_model_schema_maps(model_class: Any) -> Tuple[Optional[Dict[str, Any]], 
     )
 
 
-def _is_oci_sdk_model_class(model_class: Any) -> bool:
-    if not inspect.isclass(model_class):
-        return False
-    if not getattr(model_class, "__module__", "").startswith("oci."):
-        return False
-    swagger_types, attribute_map = _get_model_schema_maps(model_class)
-    return isinstance(swagger_types, dict) and isinstance(attribute_map, dict)
-
-
 def _resolve_model_class_from_fqn(fqn: str) -> Any:
-    if not isinstance(fqn, str) or "." not in fqn:
+    if not isinstance(fqn, str):
         raise ValueError("__model_fqn must be a fully-qualified OCI SDK model class name")
-    mod_name, cls_name = fqn.rsplit(".", 1)
-    is_models_module = mod_name.endswith(".models") or ".models." in mod_name
-    if not mod_name.startswith("oci.") or mod_name.startswith("oci._") or not is_models_module:
-        raise ValueError("__model_fqn must reference an OCI SDK model class under the 'oci.*.models' namespace")
-    mod = import_module(mod_name)
-    cls = getattr(mod, cls_name)
-    if not _is_oci_sdk_model_class(cls):
-        raise ValueError("__model_fqn must resolve to an OCI SDK model class")
+    parts = fqn.split(".")
+    if len(parts) not in (4, 5) or parts[0] != "oci" or parts[2] != "models":
+        raise ValueError("__model_fqn must reference an exported OCI SDK model class")
+    models = _get_service_module(parts[1]).models
+    cls = _resolve_model_class(models, parts[-1])
+    if cls is None or fqn not in {f"{models.__name__}.{parts[-1]}", f"{cls.__module__}.{cls.__name__}"}:
+        raise ValueError("__model_fqn must reference an exported OCI SDK model class")
     return cls
+
+
+def _validate_model_hints(value: Any, models_module: Any) -> Any:
+    """Resolve all explicit hints before any request model is constructed."""
+    selected = None
+    if isinstance(value, dict):
+        for hint in ("__model_fqn", "__class_fqn", "__model", "__class"):
+            if hint not in value:
+                continue
+            name = value[hint]
+            if not isinstance(name, str) or not name:
+                raise ValueError("Model hints must be non-empty strings")
+            cls = (_resolve_model_class_from_fqn(name) if hint.endswith("_fqn")
+                   else _resolve_model_class(models_module, name))
+            if cls is None or (selected is not None and selected is not cls):
+                raise ValueError("Unknown or conflicting OCI SDK model hints")
+            selected = cls
+            if hint.endswith("_fqn"):
+                models_module = _get_service_module(cls.__module__.split(".")[1]).models
+        for key, child in value.items():
+            if key not in ("__model_fqn", "__class_fqn", "__model", "__class"):
+                _validate_model_hints(child, models_module)
+    elif isinstance(value, list):
+        for child in value:
+            _validate_model_hints(child, models_module)
+    return selected
 
 
 def _resolve_polymorphic_model_class(model_class: Any, mapping: Dict[str, Any], models_module: Any) -> Any:
@@ -316,7 +342,7 @@ def _resolve_polymorphic_model_class(model_class: Any, mapping: Dict[str, Any], 
         return model_class
 
     subtype_class = _resolve_model_class(models_module, subtype_name) if models_module else None
-    return subtype_class if inspect.isclass(subtype_class) else model_class
+    return subtype_class if inspect.isclass(subtype_class) and issubclass(subtype_class, model_class) else model_class
 
 
 def _extract_expected_kwargs_from_source(method: Callable[..., Any]) -> Optional[set]:
@@ -336,18 +362,14 @@ def _extract_expected_kwargs_from_source(method: Callable[..., Any]) -> Optional
 
 def _supports_pagination(method: Callable[..., Any], operation_name: str) -> bool:
     try:
-        if operation_name.startswith("list_"):
+        param_names = _extract_expected_kwargs_from_source(method) or set()
+        try:
+            param_names |= set(inspect.signature(method).parameters)
+        except (TypeError, ValueError):
+            pass
+        if "page" in param_names or {"start_index", "count"} <= param_names:
             return True
-        if operation_name.startswith("summarize_"):
-            return True
-
-        expected_kwargs = _extract_expected_kwargs_from_source(method)
-        if expected_kwargs and (("page" in expected_kwargs) or ("limit" in expected_kwargs)):
-            return True
-
-        sig = inspect.signature(method)
-        param_names = set(sig.parameters.keys())
-        if "page" in param_names or "limit" in param_names:
+        if operation_name == "list_objects" and {"start", "limit"} <= param_names:
             return True
     except Exception:
         pass
@@ -434,36 +456,15 @@ def _score_discovery_match(
 @lru_cache(maxsize=1)
 def _discover_client_classes() -> List[Tuple[str, Any]]:
     discovered: List[Tuple[str, Any]] = []
-    seen: set[str] = set()
-    for module_info in pkgutil.walk_packages(oci.__path__, prefix="oci."):
-        module_name = module_info.name
-        if module_name.startswith("oci._"):
-            continue
-        if not module_name.endswith("_client") or module_name.endswith(".composite_operations"):
-            continue
+    for service_name in getattr(oci, "__all__", ()):
         try:
-            module = import_module(module_name)
-        except Exception:
+            service = _get_service_module(service_name)
+        except ValueError:
             continue
-        parent_module_name = module_name.rsplit(".", 1)[0]
-        if parent_module_name == "oci" or parent_module_name.startswith("oci._"):
-            continue
-        try:
-            parent_module = import_module(parent_module_name)
-        except Exception:
-            parent_module = None
-        for class_name, cls in inspect.getmembers(module, predicate=inspect.isclass):
-            if not class_name.endswith("Client"):
-                continue
-            if getattr(cls, "__module__", "") != module.__name__:
-                continue
-            client_fqn = f"{module_name}.{class_name}"
-            if parent_module is not None and getattr(parent_module, class_name, None) is cls:
-                client_fqn = f"{parent_module_name}.{class_name}"
-            if client_fqn in seen:
-                continue
-            seen.add(client_fqn)
-            discovered.append((client_fqn, cls))
+        for class_name, cls in vars(service).items():
+            if class_name in service.__all__ and class_name.endswith("Client") and inspect.isclass(cls):
+                client_fqn = f"{service.__name__}.{class_name}"
+                discovered.append((client_fqn, _get_client_class(client_fqn)))
     return sorted(discovered, key=lambda item: item[0])
 
 
@@ -559,12 +560,8 @@ def _resolve_model_class_from_type_name(type_name: str, models_module: Any) -> A
         return model_class
     if "." in type_name:
         try:
-            module_name, class_name = type_name.rsplit(".", 1)
-            module = import_module(module_name)
-            model_class = getattr(module, class_name)
-            if inspect.isclass(model_class):
-                return model_class
-        except Exception:
+            return _resolve_model_class_from_fqn(type_name)
+        except ValueError:
             return None
     return None
 
@@ -662,8 +659,9 @@ def _coerce_mapping_values(
 def _construct_model_from_mapping(
     mapping: Dict[str, Any], models_module: Any, candidate_classnames: List[str]
 ):
-    fqn = mapping.get("__model_fqn") or mapping.get("__class_fqn")
-    class_name = mapping.get("__model") or mapping.get("__class")
+    hinted_cls = _validate_model_hints(mapping, models_module)
+    if hinted_cls is not None and any(hint in mapping for hint in ("__model_fqn", "__class_fqn")):
+        models_module = _get_service_module(hinted_cls.__module__.split(".")[1]).models
     clean = {k: v for k, v in mapping.items() if not k.startswith("__")}
     parent_prefix_hint: Optional[str] = None
     for cand in candidate_classnames:
@@ -674,9 +672,13 @@ def _construct_model_from_mapping(
             if parent_prefix_hint is None:
                 parent_prefix_hint = cand
     clean = _coerce_mapping_values(clean, models_module, parent_prefix_hint)
-    if isinstance(fqn, str):
-        cls = _resolve_model_class_from_fqn(fqn)
+    if hinted_cls is not None:
+        cls = hinted_cls
         cls = _resolve_polymorphic_model_class(cls, clean, models_module)
+        if not any(hint in mapping for hint in ("__model_fqn", "__class_fqn")):
+            swagger_types, _ = _get_model_schema_maps(cls)
+            if isinstance(swagger_types, dict):
+                clean = {key: value for key, value in clean.items() if key in swagger_types}
         coerced_clean = _coerce_mapping_for_model_class(clean, models_module, cls)
         try:
             return oci.util.from_dict(cls, coerced_clean)
@@ -685,22 +687,6 @@ def _construct_model_from_mapping(
                 return cls(**coerced_clean)
             except Exception:
                 return mapping
-    if models_module and isinstance(class_name, str):
-        cls = _resolve_model_class(models_module, class_name)
-        if inspect.isclass(cls):
-            cls = _resolve_polymorphic_model_class(cls, clean, models_module)
-            filtered_clean = clean
-            swagger_types, _ = _get_model_schema_maps(cls)
-            if isinstance(swagger_types, dict):
-                filtered_clean = {k: v for k, v in clean.items() if k in swagger_types}
-            filtered_clean = _coerce_mapping_for_model_class(filtered_clean, models_module, cls)
-            try:
-                return oci.util.from_dict(cls, filtered_clean)
-            except Exception:
-                try:
-                    return cls(**filtered_clean)
-                except Exception:
-                    pass
     if models_module:
         for candidate in candidate_classnames:
             cls = _resolve_model_class(models_module, candidate)
@@ -832,16 +818,30 @@ def _describe_operation(
 
 def _extract_paginated_items(response_data: Any) -> Tuple[Any, Optional[str], Any]:
     if isinstance(response_data, oci.dns.models.RecordCollection) or isinstance(response_data, oci.dns.models.RRSet):
-        return response_data.items, "dns", response_data.__class__
+        return response_data.items or [], "dns", response_data.__class__
     if isinstance(response_data, oci.object_storage.models.ListObjects):
-        return response_data.objects, "object_storage", None
+        return response_data.objects or [], "object_storage", None
     if isinstance(response_data, list):
         return response_data, None, None
+    schema = getattr(response_data, "swagger_types", {})
+    # SDK arrays may be unset on an empty page. Keep their collection identity
+    # so a valid continuation is followed and the legacy output shape is stable.
     results = getattr(response_data, "results", None)
-    if results is not None:
-        return results, None, None
-    items = getattr(response_data, "items", response_data)
-    return (response_data if callable(items) else items), None, None
+    if results is not None or schema.get("results", "").startswith("list["):
+        return results if results is not None else [], None, None
+    items = getattr(response_data, "items", None)
+    if (items is not None and not callable(items)) or schema.get("items", "").startswith("list["):
+        return items if items is not None else [], None, None
+
+    # Native envelopes declare their record arrays in the SDK model schema.
+    # Do not guess among multiple arrays (e.g. schemas is SCIM metadata).
+    fields = [name for name, kind in schema.items() if kind.startswith("list[") and name != "schemas"]
+    if "resources" in fields:
+        fields = ["resources"]
+    if len(fields) == 1:
+        field = fields[0]
+        return getattr(response_data, field) or [], field, response_data
+    return None, None, None
 
 
 def _summarize_serialized_data(data: Any, sample_size: int) -> Dict[str, Any]:
@@ -961,6 +961,7 @@ def _call_with_pagination_if_applicable(
     operation_name: str,
     max_results: Optional[int] = None,
     uses_pagination: Optional[bool] = None,
+    pagination_metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Any, Optional[str], bool]:
     if uses_pagination is None:
         uses_pagination = _supports_pagination(method, operation_name)
@@ -976,6 +977,11 @@ def _call_with_pagination_if_applicable(
         list_objects_prefixes = set()
         call_result = None
         more_results_available = False
+        native_field = None
+        native_envelope = None
+        visited = {(name, params[name]) for name in ("page", "start", "start_index") if name in params}
+        page_metadata = []
+        collection_seen = False
 
         while remaining_items is None or remaining_items > 0:
             if remaining_items is not None:
@@ -983,12 +989,38 @@ def _call_with_pagination_if_applicable(
                     call_params["limit"] = min(requested_limit, remaining_items)
                 else:
                     call_params.pop("limit", None)
+                if isinstance(params.get("count"), int) and params["count"] > 0:
+                    call_params["count"] = min(params["count"], remaining_items)
 
             call_result = oci.retry.DEFAULT_RETRY_STRATEGY.make_retrying_call(method, **call_params)
             response_data = call_result.data if hasattr(call_result, "data") else call_result
             available_slots = remaining_items
 
             current_items, collection_kind, collection_class = _extract_paginated_items(response_data)
+            if current_items is None:
+                if collection_seen:
+                    raise ValueError("Pagination response changed from a collection to a non-collection")
+                # A page/limit argument does not imply a collection response.
+                # Keep aggregate/scalar payloads intact and expose any continuation.
+                if pagination_metadata is not None:
+                    pagination_metadata["collection_paginated"] = False
+                    if getattr(call_result, "next_page", None):
+                        pagination_metadata["next_page"] = call_result.next_page
+                return (
+                    response_data,
+                    getattr(call_result, "headers", {}).get("opc-request-id"),
+                    bool(getattr(call_result, "has_next_page", False)),
+                )
+            collection_seen = True
+            if getattr(response_data, "swagger_types", None):
+                record_field = (
+                    "objects" if collection_kind == "object_storage" else
+                    "items" if collection_kind == "dns" else
+                    collection_kind or ("results" if hasattr(response_data, "results") else "items")
+                )
+                page_metadata.append({
+                    key: value for key, value in _serialize_oci_data(response_data).items() if key != record_field
+                })
             if collection_kind == "dns":
                 is_dns_record_collection = True
                 dns_record_collection_class = collection_class
@@ -996,6 +1028,10 @@ def _call_with_pagination_if_applicable(
                 is_list_objects_response = True
                 if response_data.prefixes:
                     list_objects_prefixes.update(response_data.prefixes)
+            elif collection_kind:
+                native_field = collection_kind
+                if native_envelope is None:
+                    native_envelope = copy(collection_class)
 
             if not hasattr(current_items, "__len__") or not hasattr(current_items, "__getitem__"):
                 current_items = list(current_items)
@@ -1006,23 +1042,53 @@ def _call_with_pagination_if_applicable(
             if remaining_items is not None:
                 remaining_items -= current_count
 
-            if remaining_items is not None and remaining_items <= 0:
-                if is_list_objects_response and getattr(response_data, "next_start_with", None) is not None:
-                    more_results_available = True
-                elif getattr(call_result, "has_next_page", False):
-                    more_results_available = True
+            if native_field == "resources" and params.get("count") == 0:
+                # SCIM count=0 requests only the total, not traversal of resources.
+                more_results_available = bool(getattr(response_data, "total_results", 0))
                 break
 
+            next_param = "page"
+            next_value = getattr(call_result, "next_page", None)
             if is_list_objects_response:
-                next_start_with = getattr(response_data, "next_start_with", None)
-                if next_start_with is None:
-                    break
-                call_params["start"] = next_start_with
-                continue
+                next_param = "start"
+                next_value = getattr(response_data, "next_start_with", None)
+            elif native_field == "resources" and (
+                "start_index" in params or "count" in params or next_value is None
+            ):
+                start_index = getattr(response_data, "start_index", None)
+                total_results = getattr(response_data, "total_results", None)
+                if isinstance(start_index, int) and isinstance(total_results, int):
+                    accepted_params = _extract_expected_kwargs_from_source(method) or set()
+                    accepted_params |= set(inspect.signature(method).parameters)
+                    if "start_index" not in accepted_params:
+                        # Search offsets belong in request models, not SDK kwargs.
+                        # Preserve this page for manual continuation in that contract.
+                        more_results_available = more_results_available or start_index + current_count <= total_results
+                        break
+                    next_param = "start_index"
+                    next_value = start_index + current_count
+                    if next_value > total_results:
+                        next_value = None
+                    elif current_count == 0:
+                        raise ValueError("SCIM pagination made no progress before total_results was reached")
+            elif getattr(call_result, "has_next_page", False) and next_value is None:
+                raise ValueError("Paginated response has no usable next-page token")
 
-            if not getattr(call_result, "has_next_page", False):
+            if remaining_items is not None and remaining_items <= 0:
+                more_results_available = more_results_available or next_value is not None
+                # A backend token cannot resume records discarded within a page.
+                if pagination_metadata is not None and next_value is not None and current_count <= available_slots:
+                    pagination_metadata[next_param] = next_value
                 break
-            call_params["page"] = call_result.next_page
+            if next_value is None:
+                break
+            continuation = (next_param, next_value)
+            if continuation in visited or call_params.get(next_param) == next_value:
+                raise ValueError("Pagination returned a repeated continuation")
+            visited.add(continuation)
+            call_params[next_param] = next_value
+            if next_param == "start_index":
+                call_params.pop("page", None)
 
         response = call_result
         if is_dns_record_collection:
@@ -1032,8 +1098,15 @@ def _call_with_pagination_if_applicable(
                 objects=aggregated_results,
                 prefixes=list(list_objects_prefixes),
             )
+        elif native_envelope is not None:
+            setattr(native_envelope, native_field, aggregated_results)
+            if native_field == "resources":
+                native_envelope.items_per_page = len(aggregated_results)
+            data = native_envelope
         else:
             data = aggregated_results
+        if pagination_metadata is not None and page_metadata:
+            pagination_metadata["page_metadata"] = page_metadata
         has_more = more_results_available
         try:
             opc_request_id = response.headers.get("opc-request-id")
@@ -1235,6 +1308,8 @@ def invoke_oci_api(
         "Use 'auto' for compact defaults, 'summary' for a compact structural summary, or 'full' for the full payload.",
     ] = "auto",
 ) -> dict:
+    validated_class = None
+    validated_method = None
     try:
         if max_results is not None and max_results < 1:
             raise ValueError("max_results must be >= 1")
@@ -1247,26 +1322,33 @@ def invoke_oci_api(
         else:
             normalized_fields = None
         _validate_client_fqn(client_fqn, require_client_class=True)
-        client = _import_client(client_fqn)
-        method = _resolve_public_client_method(client, client_fqn, operation)
+        validated_class = _get_client_class(client_fqn)
+        validated_method = _resolve_public_client_method(validated_class, client_fqn, operation)
 
         input_params = params or {}
-        uses_pagination = _supports_pagination(method, operation)
-        typed_params = _coerce_params_to_method_types(client_fqn, method, input_params)
+        _validate_model_hints(input_params, _import_models_module_from_client_fqn(client_fqn))
+        typed_params = _coerce_params_to_method_types(client_fqn, validated_method, input_params)
         final_params = _align_params_to_signature(
-            method,
+            validated_method,
             operation,
             _coerce_params_to_oci_models(client_fqn, operation, typed_params),
         )
+        client = _import_client(client_fqn)
+        method = _resolve_public_client_method(client, client_fqn, operation)
+        uses_pagination = _supports_pagination(method, operation)
         logger.debug(f"invoke_oci_api final_params keys: {list(final_params.keys())}")
         logger.debug(f"op: {operation}")
+        pagination_metadata: Dict[str, Any] = {}
         data, opc_request_id, has_more_results = _call_with_pagination_if_applicable(
             method,
             final_params,
             operation,
             max_results,
             uses_pagination=uses_pagination,
+            pagination_metadata=pagination_metadata,
         )
+        if pagination_metadata.pop("collection_paginated", True) is False:
+            uses_pagination = False
 
         serialized_data = _serialize_oci_data(data)
         projected_data, matched_fields, unmatched_fields, available_fields = _project_top_level_fields(
@@ -1281,7 +1363,16 @@ def invoke_oci_api(
                 else "full"
             )
 
-        result_meta: Dict[str, Any] = {"result_mode": effective_result_mode, "pagination_used": uses_pagination}
+        if max_results is not None and isinstance(projected_data, list):
+            has_more_results = has_more_results or len(projected_data) > max_results
+
+        result_meta: Dict[str, Any] = {
+            "result_mode": effective_result_mode,
+            "pagination_used": uses_pagination,
+            "has_more_results": has_more_results,
+            "truncated": has_more_results,
+            **pagination_metadata,
+        }
         if max_results is not None:
             result_meta["max_results"] = max_results
         if normalized_fields is not None:
@@ -1296,17 +1387,12 @@ def invoke_oci_api(
             trim_limit = None if uses_pagination else max_results
             if trim_limit is not None and isinstance(projected_data, list):
                 rendered_data = projected_data[:trim_limit]
-                truncated = len(projected_data) > trim_limit
             else:
                 rendered_data = projected_data
-                truncated = False
             if isinstance(projected_data, list):
                 result_meta["returned_items"] = len(rendered_data)
-                if uses_pagination and has_more_results:
-                    result_meta["truncated"] = True
-                else:
+                if not (uses_pagination and has_more_results):
                     result_meta["total_items"] = len(projected_data)
-                    result_meta["truncated"] = truncated
 
         result = {
             "client": client_fqn,
@@ -1331,24 +1417,18 @@ def invoke_oci_api(
             error_result["available_fields"] = exc.available_fields
         error_text = str(exc)
         needs_param_hints = any(clue in error_text for clue in ("unexpected keyword argument", "required positional argument"))
-        try:
-            cls = _get_client_class(client_fqn)
-            try:
-                method = _resolve_public_client_method(cls, client_fqn, operation)
-            except AttributeError:
+        if validated_class is not None:
+            if validated_method is None:
                 suggestions = difflib.get_close_matches(
                     operation,
-                    _public_client_operation_names(cls),
+                    _public_client_operation_names(validated_class),
                     n=5,
                     cutoff=0.4,
                 )
                 if suggestions:
                     error_result["suggested_operations"] = suggestions
-            else:
-                if needs_param_hints and callable(method):
-                    error_result.update(_build_param_error_hints(method, operation, params or {}, error_text))
-        except Exception:
-            pass
+            elif needs_param_hints:
+                error_result.update(_build_param_error_hints(validated_method, operation, params or {}, error_text))
         return error_result
 
 

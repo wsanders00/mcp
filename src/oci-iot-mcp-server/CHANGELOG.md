@@ -27,6 +27,7 @@
 ### Changed
 
 - Use `oracle-mcp-common` for OCI credential resolution, retaining IoT's existing eight authentication modes and deprecated `OCI_IOT_*` aliases. Canonical `OCI_MCP_*` settings take precedence, and conflicting inline/path delegation or OKE token inputs now fail closed.
+- Use published `oracle-mcp-common` 0.1.x for local development and installed distributions, compatible with FastMCP 3.4.10.
 - Document current and legacy IoT domain group types, the active digital-twin restriction on IoT domain deletion, and the compatible additive minor-model upgrade workflow. Model downgrades are unsupported.
 
 ### Added
@@ -40,8 +41,12 @@
 ### Security
 
 - Require PyJWT 2.15.1 or newer and urllib3 2.8.0 or newer to address published security advisories. The PyJWT shared-options advisory has no patched release listed; upgrading does not establish that it is resolved.
-- Update locked multidict to 6.9.1 and AnyIO to 4.15.1, retain PyJWT 2.15.1, urllib3 2.8.0 and cryptography 50.0.1 security bounds.
-- Update `cryptography` to 50.0.1 to prevent PKCS#7 EnvelopedData decryption from exposing a Bleichenbacher oracle through distinguishable errors and timing (CVE-2026-69247).
+
+## 1.0.3
+
+### Security
+
+- Updated locked multidict to 6.9.1; updated locked AnyIO to 4.15.1; updated locked `PyJWT` to 2.15.1 and `urllib3` to 2.8.0; updated `cryptography` to 50.0.2 to prevent PKCS#7 EnvelopedData decryption from exposing a Bleichenbacher oracle through distinguishable errors and timing (CVE-2026-69247).
 
 ## 1.0.2
 

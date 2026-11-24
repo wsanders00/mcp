@@ -11,20 +11,21 @@ operation that returns an LLM-friendly result.  See TOOLS_DESIGN.md.
 import json
 import logging
 
-from mcp.server.fastmcp import FastMCP, Context
+from fastmcp import FastMCP, Context
 
 from ._dt_connect import get_dt
-from ._helpers import safe_call, build_response, err, fmt
+from ._helpers import safe_call, build_response, err, fmt, tool_registrar
 
 logger = logging.getLogger('oracle-data-studio-mcp')
 
 _NO = 'Data Transforms not connected. Set DT_URL, DT_USER, DT_PASSWORD.'
 
 
-def register_tools(mcp: FastMCP):
+def register_tools(mcp: FastMCP, *, profile: str = 'admin'):
+    tool = tool_registrar(mcp, profile)
 
     # ── 27. dt_explore ────────────────────────────────────────────────
-    @mcp.tool()
+    @tool
     def dt_explore(ctx: Context) -> str:
         """Get a full Data Transforms environment overview: version, connections, projects, and active schedules.
 
@@ -78,7 +79,7 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 28. dt_describe_project ───────────────────────────────────────
-    @mcp.tool()
+    @tool
     def dt_describe_project(project_name: str,
                              ctx: Context = None) -> str:
         """Get a complete inventory of a Data Transforms project (read-only).
@@ -132,9 +133,9 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 28b. dt_manage_project ────────────────────────────────────────
-    @mcp.tool()
+    @tool
     def dt_manage_project(action: str, project_name: str,
-                           confirm: str = None,
+                           confirm: str | None = None,
                            ctx: Context = None) -> str:
         """Manage Data Transforms projects (admin-only).
 
@@ -170,7 +171,7 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 29. dt_describe_connection ────────────────────────────────────
-    @mcp.tool()
+    @tool
     def dt_describe_connection(connection_name: str,
                                 ctx: Context) -> str:
         """Get connection details, test it, and list its available schemas.
@@ -222,7 +223,7 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 30. dt_create_pipeline ────────────────────────────────────────
-    @mcp.tool()
+    @tool
     def dt_create_pipeline(project_name: str,
                             source_connection: str,
                             source_schema: str,
@@ -230,7 +231,7 @@ def register_tools(mcp: FastMCP):
                             target_connection: str,
                             target_schema: str,
                             target_table: str,
-                            dataflow_name: str = None,
+                            dataflow_name: str | None = None,
                             integration_type: str = 'CONTROL_APPEND',
                             ctx: Context = None) -> str:
         """Create a simple source-to-target dataflow in a Data Transforms project.
@@ -311,7 +312,7 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 31. dt_check_health ───────────────────────────────────────────
-    @mcp.tool()
+    @tool
     def dt_check_health(ctx: Context) -> str:
         """Check Data Transforms environment health: test all connections and list schedules.
         """
@@ -370,8 +371,8 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 32. dt_browse_data ────────────────────────────────────────────
-    @mcp.tool()
-    def dt_browse_data(connection_name: str, schema: str = None,
+    @tool
+    def dt_browse_data(connection_name: str, schema: str | None = None,
                         ctx: Context = None) -> str:
         """Browse schemas and tables available through a Data Transforms connection.
 
@@ -409,7 +410,7 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 33. dt_manage_dataflow ────────────────────────────────────────
-    @mcp.tool()
+    @tool
     def dt_manage_dataflow(project_name: str, dataflow_name: str,
                             ctx: Context = None) -> str:
         """Check if a dataflow exists in a project and return its details.
@@ -450,17 +451,17 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 34. dt_manage_schedule ────────────────────────────────────────
-    @mcp.tool()
+    @tool
     def dt_manage_schedule(action: str,
-                            schedule_name: str = None,
-                            project_name: str = None,
-                            resource_name: str = None,
+                            schedule_name: str | None = None,
+                            project_name: str | None = None,
+                            resource_name: str | None = None,
                             resource_type: str = 'dataflow',
-                            frequency: str = None,
-                            time: str = None,
-                            days: str = None,
+                            frequency: str | None = None,
+                            time: str | None = None,
+                            days: str | None = None,
                             status: str = 'INACTIVE',
-                            confirm: str = None,
+                            confirm: str | None = None,
                             ctx: Context = None) -> str:
         """Manage Data Transforms schedules: list, create, or delete.
 
@@ -575,9 +576,9 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 35. dt_manage_variables ───────────────────────────────────────
-    @mcp.tool()
-    def dt_manage_variables(action: str, variable_name: str = None,
-                             value: str = None,
+    @tool
+    def dt_manage_variables(action: str, variable_name: str | None = None,
+                             value: str | None = None,
                              ctx: Context = None) -> str:
         """Manage Data Transforms variables: list, create, or update.
 
@@ -614,7 +615,7 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 36. dt_run_pipeline ──────────────────────────────────────────
-    @mcp.tool()
+    @tool
     def dt_run_pipeline(project_name: str,
                          resource_name: str,
                          resource_type: str = 'dataflow',
@@ -651,18 +652,18 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 37. dt_manage_connection ─────────────────────────────────────
-    @mcp.tool()
+    @tool
     def dt_manage_connection(action: str,
-                               connection_name: str = None,
-                               connection_type: str = None,
-                               host: str = None,
-                               port: int = None,
-                               service_name: str = None,
-                               user: str = None,
-                               password: str = None,
-                               wallet_path: str = None,
-                               jdbc_url: str = None,
-                               confirm: str = None,
+                               connection_name: str | None = None,
+                               connection_type: str | None = None,
+                               host: str | None = None,
+                               port: int | None = None,
+                               service_name: str | None = None,
+                               user: str | None = None,
+                               password: str | None = None,
+                               wallet_path: str | None = None,
+                               jdbc_url: str | None = None,
+                               confirm: str | None = None,
                                ctx: Context = None) -> str:
         """Manage Data Transforms connections: list, create, delete, or test.
 
@@ -743,15 +744,15 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 38. dt_manage_dataload ───────────────────────────────────────
-    @mcp.tool()
+    @tool
     def dt_manage_dataload(action: str,
                             project_name: str,
-                            dataload_name: str = None,
-                            source_connection: str = None,
-                            source_schema: str = None,
-                            target_connection: str = None,
-                            target_schema: str = None,
-                            tables: str = None,
+                            dataload_name: str | None = None,
+                            source_connection: str | None = None,
+                            source_schema: str | None = None,
+                            target_connection: str | None = None,
+                            target_schema: str | None = None,
+                            tables: str | None = None,
                             load_type: str = 'TRUNCATE',
                             ctx: Context = None) -> str:
         """Manage dataloads in a Data Transforms project.
@@ -836,12 +837,12 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 39. dt_manage_data_entities ──────────────────────────────────
-    @mcp.tool()
+    @tool
     def dt_manage_data_entities(action: str,
-                                  connection_name: str = None,
-                                  schema_name: str = None,
-                                  entity_name: str = None,
-                                  entity_id: str = None,
+                                  connection_name: str | None = None,
+                                  schema_name: str | None = None,
+                                  entity_name: str | None = None,
+                                  entity_id: str | None = None,
                                   ctx: Context = None) -> str:
         """Manage data entities in Data Transforms: list, get details, or import from a connection.
 
@@ -896,10 +897,10 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 40. dt_manage_workflow ──────────────────────────────────────────
-    @mcp.tool()
+    @tool
     def dt_manage_workflow(action: str,
                             project_name: str,
-                            workflow_name: str = None,
+                            workflow_name: str | None = None,
                             ctx: Context = None) -> str:
         """Manage workflows in a Data Transforms project: list, get details, or check existence.
 

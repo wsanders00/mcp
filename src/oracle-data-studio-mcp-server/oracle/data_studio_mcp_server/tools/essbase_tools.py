@@ -11,20 +11,21 @@ operation that returns an LLM-friendly result.  See TOOLS_DESIGN.md.
 import json
 import logging
 
-from mcp.server.fastmcp import FastMCP, Context
+from fastmcp import FastMCP, Context
 
 from ._essbase_connect import get_essbase
-from ._helpers import safe_call, build_response, err, fmt
+from ._helpers import safe_call, build_response, err, fmt, tool_registrar
 
 logger = logging.getLogger('oracle-data-studio-mcp')
 
 _NO = 'Essbase not connected. Set ESSBASE_URL + credentials.'
 
 
-def register_tools(mcp: FastMCP):
+def register_tools(mcp: FastMCP, *, profile: str = 'admin'):
+    tool = tool_registrar(mcp, profile)
 
     # ── 1. essbase_explore ────────────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_explore(ctx: Context) -> str:
         """Get a full overview of the Essbase server: applications, their databases, status, sizes, and settings.
 
@@ -73,7 +74,7 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 2. essbase_describe_database ──────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_describe_database(app_name: str, db_name: str,
                                   ctx: Context) -> str:
         """Get a complete database profile: dimensions with member counts, storage type (BSO/ASO), settings, statistics, and substitution variables.
@@ -142,7 +143,7 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 3. essbase_query ──────────────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_query(app_name: str, db_name: str, mdx: str,
                       max_rows: int = 1000,
                       ctx: Context = None) -> str:
@@ -172,9 +173,9 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 4. essbase_browse_outline ─────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_browse_outline(app_name: str, db_name: str,
-                                parent: str = None, depth: int = 2,
+                                parent: str | None = None, depth: int = 2,
                                 ctx: Context = None) -> str:
         """Browse the cube outline hierarchy.
 
@@ -218,7 +219,7 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 5. essbase_search_members ─────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_search_members(app_name: str, db_name: str,
                                 pattern: str, ctx: Context) -> str:
         """Search for members in the cube outline and return matches with their properties and ancestors.
@@ -256,10 +257,10 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 6. essbase_run_calculation ────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_run_calculation(app_name: str, db_name: str,
-                                 script_name: str = None,
-                                 calc_script: str = None,
+                                 script_name: str | None = None,
+                                 calc_script: str | None = None,
                                  ctx: Context = None) -> str:
         """Run a calculation on an Essbase database — fire-and-forget with automatic wait.
 
@@ -310,10 +311,10 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 7. essbase_load_data ──────────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_load_data(app_name: str, db_name: str,
-                           rule_file: str = None,
-                           data_file: str = None,
+                           rule_file: str | None = None,
+                           data_file: str | None = None,
                            ctx: Context = None) -> str:
         """Load data into an Essbase database.
 
@@ -348,7 +349,7 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 8. essbase_deploy_workbook ────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_deploy_workbook(app_name: str, file_path: str,
                                  ctx: Context) -> str:
         """Import an Excel workbook to create or update an Essbase cube.
@@ -388,13 +389,13 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 9. essbase_manage_variables ───────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_manage_variables(action: str, scope: str,
-                                  app_name: str = None,
-                                  db_name: str = None,
-                                  variable_name: str = None,
-                                  value: str = None,
-                                  confirm: str = None,
+                                  app_name: str | None = None,
+                                  db_name: str | None = None,
+                                  variable_name: str | None = None,
+                                  value: str | None = None,
+                                  confirm: str | None = None,
                                   ctx: Context = None) -> str:
         """Manage Essbase substitution variables at any scope.
 
@@ -475,7 +476,7 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 10. essbase_get_script ────────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_get_script(app_name: str, db_name: str,
                             script_name: str, ctx: Context) -> str:
         """Get a script's content along with its validation status.
@@ -514,9 +515,9 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 11. essbase_manage_security ───────────────────────────────────
-    @mcp.tool()
-    def essbase_manage_security(username: str = None,
-                                 group_name: str = None,
+    @tool
+    def essbase_manage_security(username: str | None = None,
+                                 group_name: str | None = None,
                                  ctx: Context = None) -> str:
         """Get the complete security profile for a user or group.
 
@@ -579,7 +580,7 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 12. essbase_server_health ─────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_server_health(ctx: Context) -> str:
         """Quick Essbase server health check: version, instance config, active sessions, locked objects.
         """
@@ -618,10 +619,10 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 13. essbase_export_data ───────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_export_data(app_name: str, db_name: str,
-                             mdx: str = None,
-                             report_name: str = None,
+                             mdx: str | None = None,
+                             report_name: str | None = None,
                              max_rows: int = 1000,
                              ctx: Context = None) -> str:
         """Export data from an Essbase database.
@@ -657,12 +658,12 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 14. essbase_manage_application ─────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_manage_application(action: str, app_name: str,
-                                    db_name: str = None,
+                                    db_name: str | None = None,
                                     db_type: str = 'BSO',
-                                    new_name: str = None,
-                                    confirm: str = None,
+                                    new_name: str | None = None,
+                                    confirm: str | None = None,
                                     ctx: Context = None) -> str:
         """Create, delete, copy, rename, start, or stop an Essbase application.
 
@@ -732,13 +733,13 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 15. essbase_manage_script ──────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_manage_script(action: str, app_name: str,
                                db_name: str,
                                script_name: str,
-                               content: str = None,
-                               new_name: str = None,
-                               confirm: str = None,
+                               content: str | None = None,
+                               new_name: str | None = None,
+                               confirm: str | None = None,
                                ctx: Context = None) -> str:
         """Manage calc scripts: list, create, update, delete, or validate.
 
@@ -826,11 +827,11 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 16. essbase_manage_files ───────────────────────────────────────
-    @mcp.tool()
-    def essbase_manage_files(action: str, path: str = None,
-                              target_path: str = None,
-                              content: str = None,
-                              confirm: str = None,
+    @tool
+    def essbase_manage_files(action: str, path: str | None = None,
+                              target_path: str | None = None,
+                              content: str | None = None,
+                              confirm: str | None = None,
                               ctx: Context = None) -> str:
         """Manage files in the Essbase file catalog: list, upload, download, copy, move, delete, create_folder.
 
@@ -916,16 +917,16 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 17. essbase_manage_connections ──────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_manage_connections(action: str,
-                                    connection_name: str = None,
-                                    host: str = None,
-                                    port: int = None,
-                                    service_name: str = None,
-                                    user: str = None,
-                                    password: str = None,
+                                    connection_name: str | None = None,
+                                    host: str | None = None,
+                                    port: int | None = None,
+                                    service_name: str | None = None,
+                                    user: str | None = None,
+                                    password: str | None = None,
                                     db_type: str = 'oracle',
-                                    confirm: str = None,
+                                    confirm: str | None = None,
                                     ctx: Context = None) -> str:
         """Manage Essbase global connections: list, get, create, update, test, or delete.
 
@@ -1028,10 +1029,10 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 18. essbase_manage_locks ───────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_manage_locks(app_name: str, db_name: str,
                               action: str = 'list',
-                              object_name: str = None,
+                              object_name: str | None = None,
                               ctx: Context = None) -> str:
         """View and manage locks on an Essbase database.
 
@@ -1091,15 +1092,15 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 19. essbase_manage_filters ─────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_manage_filters(action: str, app_name: str,
                                 db_name: str,
-                                filter_name: str = None,
-                                filter_rows: str = None,
-                                user_or_group: str = None,
+                                filter_name: str | None = None,
+                                filter_rows: str | None = None,
+                                user_or_group: str | None = None,
                                 access: str = 'read',
-                                new_name: str = None,
-                                confirm: str = None,
+                                new_name: str | None = None,
+                                confirm: str | None = None,
                                 ctx: Context = None) -> str:
         """Manage security filters for row-level access control on an Essbase database.
 
@@ -1260,11 +1261,11 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 20. essbase_manage_jobs ────────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_manage_jobs(action: str = 'list',
-                             job_id: int = None,
+                             job_id: int | None = None,
                              limit: int = 50,
-                             confirm: str = None,
+                             confirm: str | None = None,
                              ctx: Context = None) -> str:
         """Monitor and manage Essbase jobs: list recent jobs, check status, or rerun a failed job.
 
@@ -1319,19 +1320,19 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── essbase_edit_outline ──────────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_edit_outline(app_name: str, db_name: str,
                               action: str,
                               member_name: str,
-                              parent_name: str = None,
-                              new_name: str = None,
-                              formula: str = None,
-                              consolidation: str = None,
-                              data_storage: str = None,
+                              parent_name: str | None = None,
+                              new_name: str | None = None,
+                              formula: str | None = None,
+                              consolidation: str | None = None,
+                              data_storage: str | None = None,
                               alias_table: str = 'Default',
-                              alias_value: str = None,
-                              uda_value: str = None,
-                              confirm: str = None,
+                              alias_value: str | None = None,
+                              uda_value: str | None = None,
+                              confirm: str | None = None,
                               ctx: Context = None) -> str:
         """Edit the cube outline: add, remove, move, or rename members and set properties.
 
@@ -1449,13 +1450,13 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── essbase_manage_datasources ────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_manage_datasources(action: str,
-                                    datasource_name: str = None,
-                                    connection: str = None,
-                                    query: str = None,
-                                    columns: str = None,
-                                    confirm: str = None,
+                                    datasource_name: str | None = None,
+                                    connection: str | None = None,
+                                    query: str | None = None,
+                                    columns: str | None = None,
+                                    confirm: str | None = None,
                                     ctx: Context = None) -> str:
         """Manage global datasources for data loads and drill-through.
 
@@ -1530,16 +1531,16 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── essbase_manage_drill_through ──────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_manage_drill_through(action: str,
                                       app_name: str,
                                       db_name: str,
-                                      report_name: str = None,
-                                      connection: str = None,
-                                      sql_query: str = None,
-                                      columns: str = None,
-                                      drillable_regions: str = None,
-                                      confirm: str = None,
+                                      report_name: str | None = None,
+                                      connection: str | None = None,
+                                      sql_query: str | None = None,
+                                      columns: str | None = None,
+                                      drillable_regions: str | None = None,
+                                      confirm: str | None = None,
                                       ctx: Context = None) -> str:
         """Manage drill-through reports that link cube cells to detail data.
 
@@ -1635,13 +1636,13 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 24. essbase_manage_database ────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_manage_database(action: str, app_name: str,
                                  db_name: str,
-                                 new_name: str = None,
-                                 target_app: str = None,
-                                 target_db: str = None,
-                                 confirm: str = None,
+                                 new_name: str | None = None,
+                                 target_app: str | None = None,
+                                 target_db: str | None = None,
+                                 confirm: str | None = None,
                                  ctx: Context = None) -> str:
         """Manage databases within an Essbase application: delete, copy, or rename.
 
@@ -1706,13 +1707,13 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 25. essbase_manage_users ───────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_manage_users(action: str,
-                              user_id: str = None,
-                              password: str = None,
-                              role: str = None,
-                              app_name: str = None,
-                              confirm: str = None,
+                              user_id: str | None = None,
+                              password: str | None = None,
+                              role: str | None = None,
+                              app_name: str | None = None,
+                              confirm: str | None = None,
                               ctx: Context = None) -> str:
         """Manage Essbase users: list, get details, create, update, delete, provision, deprovision roles, or list roles.
 
@@ -1826,11 +1827,11 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 26. essbase_manage_groups ──────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_manage_groups(action: str,
-                               group_id: str = None,
-                               user_ids: str = None,
-                               confirm: str = None,
+                               group_id: str | None = None,
+                               user_ids: str | None = None,
+                               confirm: str | None = None,
                                ctx: Context = None) -> str:
         """Manage Essbase groups: list, get details, create, delete, add/remove users, get users, add/remove subgroups.
 
@@ -1953,10 +1954,10 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 27. essbase_manage_sessions ────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_manage_sessions(action: str = 'list',
-                                  session_id: str = None,
-                                  confirm: str = None,
+                                  session_id: str | None = None,
+                                  confirm: str | None = None,
                                   ctx: Context = None) -> str:
         """Manage Essbase sessions: list active sessions, get current session, kill a session, or kill all sessions.
 
@@ -2007,10 +2008,10 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 28. essbase_manage_db_settings ─────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_manage_db_settings(app_name: str, db_name: str,
                                      category: str = 'all',
-                                     settings_json: str = None,
+                                     settings_json: str | None = None,
                                      ctx: Context = None) -> str:
         """Get or update detailed database settings and tuning information for performance analysis.
 
@@ -2127,7 +2128,7 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 29. essbase_get_logs ───────────────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_get_logs(app_name: str,
                           latest_only: bool = True,
                           ctx: Context = None) -> str:
@@ -2157,10 +2158,10 @@ def register_tools(mcp: FastMCP):
             return err(str(exc))
 
     # ── 30. essbase_outline_metadata ──────────────────────────────────
-    @mcp.tool()
+    @tool
     def essbase_outline_metadata(app_name: str, db_name: str,
                                    category: str = 'all',
-                                   dimension_name: str = None,
+                                   dimension_name: str | None = None,
                                    ctx: Context = None) -> str:
         """Get detailed outline metadata: dimensions, generations, levels, smart lists, and outline settings.
 
